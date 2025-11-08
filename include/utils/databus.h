@@ -11,6 +11,10 @@
 #include <condition_variable>
 #include <chrono>
 #include <functional>
+#include <iostream>
+#include <ostream>
+
+#include "log.h"
 #include "utils/utils.h"
 
 /**
@@ -89,6 +93,23 @@ public:
     bool wait_for_time_at_least(const std::string& topic, const std::string& code,
                                 int64_t ts_ms, T& out, int64_t timeout_ms = 1000);
 
+
+    void reset() {
+        std::lock_guard<std::mutex> lk(_m);
+        _topics.clear();
+    }
+
+    void debug_print_topics() const {
+        std::lock_guard<std::mutex> lk(_m);
+        std::cout << "=== DataBus 主题状态 ===" << std::endl;
+        for (const auto& [topic, channel_info] : _topics) {
+            auto* channel = static_cast<ChannelBase*>(channel_info.second.get());
+            std::cout << "主题: " << topic << std::endl;
+
+            // 这里需要根据实际类型来打印，简化版本只打印主题名
+        }
+        std::cout << "=========================" << std::endl;
+    }
 private:
     struct ChannelBase { virtual ~ChannelBase()=default; };
 

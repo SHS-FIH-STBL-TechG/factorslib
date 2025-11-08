@@ -1,38 +1,56 @@
-
 #pragma once
-#include <cstdarg>
-#include <cstdio>
-
 /**
- * @file log.h
- * @brief 日志对外头文件，提供三个宏：TSET_INFO/TSET_WARN/TSET_ERROR。
- * 使用方式：在代码中直接调用 TSET_INFO("a=%d", a);
- * 输出格式为：[LEVEL] [函数签名] 消息文本
+ * Simple logging facade for factorlib.
+ * If USE_SPDLOG is defined and headers are available, map to spdlog.
+ * Otherwise fall back to fprintf(stderr, ...).
  */
+ 
+#ifdef USE_SPDLOG
+  #include <spdlog/spdlog.h>
+  #include <spdlog/sinks/stdout_color_sinks.h>
+#endif
+#include <cstdio>
+#include <cstdarg>
 
 namespace factorlib {
+namespace log {
 
-/// 日志级别
-enum class LogLevel { INFO, WARN, ERROR };
+// initialize logging once per process (no-op for fallback)
+inline void init_logging_once() {
+#ifdef USE_SPDLOG
+    static bool inited = false;
+    if(!inited){
+        // use colored console sink
+        auto logger = spdlog::stdout_color_mt("factorlib");
+        spdlog::set_default_logger(logger);
+        spdlog::set_level(spdlog::level::trace);
+        spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
+        inited = true;
+    }
+#endif
+}
 
-/**
- * @brief 记录一条日志（内部实现函数，建议使用宏）
- * @param lvl   日志级别
- * @param funcSig 当前函数签名（由宏传入）
- * @param fmt   printf 风格的格式串
- * @param ...   可变参数
- */
-void log_message(LogLevel lvl, const char* funcSig, const char* fmt, ...);
-
+} // namespace log
 } // namespace factorlib
 
-// 下面的宏自动传入函数签名，便于定位问题
-#if defined(__GNUC__) || defined(__clang__)
-  #define TSET_INFO(...)  ::factorlib::log_message(::factorlib::LogLevel::INFO, __PRETTY_FUNCTION__, __VA_ARGS__)
-  #define TSET_WARN(...)  ::factorlib::log_message(::factorlib::LogLevel::WARN,  __PRETTY_FUNCTION__, __VA_ARGS__)
-  #define TSET_ERROR(...) ::factorlib::log_message(::factorlib::LogLevel::ERROR, __PRETTY_FUNCTION__, __VA_ARGS__)
+#ifdef USE_SPDLOG
+  #define LOG_TRACE(...) do { ::factorlib::log::init_logging_once(); spdlog::trace(__VA_ARGS__); } while(0)
+  #define LOG_DEBUG(...) do { ::factorlib::log::init_logging_once(); spdlog::debug(__VA_ARGS__); } while(0)
+  #define LOG_INFO(...)  do { ::factorlib::log::init_logging_once(); spdlog::info(__VA_ARGS__); } while(0)
+  #define LOG_WARN(...)  do { ::factorlib::log::init_logging_once(); spdlog::warn(__VA_ARGS__); } while(0)
+  #define LOG_ERROR(...) do { ::factorlib::log::init_logging_once(); spdlog::error(__VA_ARGS__); } while(0)
 #else
-  #define TSET_INFO(...)  ::factorlib::log_message(::factorlib::LogLevel::INFO, __FUNCTION__, __VA_ARGS__)
-  #define TSET_WARN(...)  ::factorlib::log_message(::factorlib::LogLevel::WARN,  __FUNCTION__, __VA_ARGS__)
-  #define TSET_ERROR(...) ::factorlib::log_message(::factorlib::LogLevel::ERROR, __FUNCTION__, __VA_ARGS__)
+  inline void __flog_fallback(const char* level, const char* fmt, ...) {
+    std::fprintf(stderr, "[%s] ", level);
+    va_list ap; va_start(ap, fmt);
+    std::vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    std::fprintf(stderr, "\n");
+    std::fflush(stderr);
+  }
+  #define LOG_TRACE(...) __flog_fallback("TRACE", __VA_ARGS__)
+  #define LOG_DEBUG(...) __flog_fallback("DEBUG", __VA_ARGS__)
+  #define LOG_INFO(...)  __flog_fallback("INFO",  __VA_ARGS__)
+  #define LOG_WARN(...)  __flog_fallback("WARN",  __VA_ARGS__)
+  #define LOG_ERROR(...) __flog_fallback("ERROR", __VA_ARGS__)
 #endif

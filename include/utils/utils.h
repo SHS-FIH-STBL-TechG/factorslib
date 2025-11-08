@@ -108,6 +108,7 @@ public:
      * @return 是否有桶被产出
      */
     bool force_flush(BucketOutputs& out);
+    bool ensure_bucket(int64_t ts_ms, BucketOutputs& out);
 private:
     int64_t _bucket_ms{1000};
     bool _has_bucket{false};
@@ -117,8 +118,8 @@ private:
     int _last_trading_day{0};
     uint64_t _last_volume{0};
     double _last_turnover{0.0};
-    // 内部辅助
-    void ensure_bucket(int64_t ts_ms);
+    // 返回值为bool，表示是否跨越了桶边界
+
     void start_new_bucket(int64_t new_start);
 };
 

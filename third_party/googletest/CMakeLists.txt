@@ -13,7 +13,15 @@ set(GTEST_SRC_DIR ${GTEST_ROOT}/src)
 # 生成静态库 gtest
 add_library(gtest ${GTEST_SRC_DIR}/gtest-all.cc)
 target_include_directories(gtest PUBLIC ${GTEST_INCLUDE_DIR} ${GTEST_ROOT})
-target_compile_definitions(gtest PRIVATE -DGTEST_HAS_PTHREAD=1)
+if (MSVC)
+  target_compile_definitions(gtest PRIVATE -DGTEST_HAS_PTHREAD=0)
+else()
+  if (MSVC)
+  target_compile_definitions(gtest PRIVATE -DGTEST_HAS_PTHREAD=0)
+else()
+  target_compile_definitions(gtest PRIVATE -DGTEST_HAS_PTHREAD=1)
+endif()
+endif()
 
 # 生成静态库 gtest_main（包含 main 函数）
 add_library(gtest_main ${GTEST_SRC_DIR}/gtest_main.cc)

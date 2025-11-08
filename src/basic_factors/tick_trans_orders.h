@@ -15,10 +15,17 @@
  *          - zyd/tick/trans, zyd/tick/orders
  */
 
+
+// 对外暴露 interval 主题常量（供测试/其他模块使用）
+static inline constexpr const char* TOP_INTERVAL_TRANS  = "zyd/interval/trans";
+static inline constexpr const char* TOP_INTERVAL_ORDERS = "zyd/interval/orders";
 namespace factorlib {
 
 /// 配置项：只包含桶宽度（毫秒）
-struct TickTransOrdersConfig { int64_t bucket_size_ms = 1000; };
+struct TickTransOrdersConfig {
+    int64_t bucket_size_ms = 1000;
+    bool    emit_tick_interval = false; ///< 是否发布两个 tick 之间的切片
+};
 
 /**
  * @brief 0109 因子的“翻译”实现（基础因子，写入 DataBus）
@@ -50,6 +57,10 @@ private:
     TickTransOrdersConfig _cfg;
     std::vector<std::string> _codes;
     std::unordered_map<std::string, NmsBucketAggregator> _agg;
+    // --- interval 相关：在相邻 tick 之间暂存切片，下一笔 tick 到来时发布 ---
+    std::unordered_map<std::string, int64_t> _last_tick_ms;
+    std::unordered_map<std::string, std::vector<Transaction>> _interval_trans_pending;
+    std::unordered_map<std::string, std::vector<Entrust>> _interval_orders_pending;
 
     void ensure_code(const std::string& code);
     void maybe_flush_and_publish(const std::string& code, int64_t now_ms);
