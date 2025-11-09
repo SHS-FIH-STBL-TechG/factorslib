@@ -1,8 +1,10 @@
-
+//  src/basic_factors/tick_trans_orders.h
 #pragma once
 #include <string>
 #include <vector>
 #include <unordered_map>
+
+#include "ifactor.h"
 #include "utils/utils.h"
 #include "utils/databus.h"
 #include "utils/log.h"
@@ -35,23 +37,23 @@ struct TickTransOrdersConfig {
  *   - 若当前时间跨桶，自动在下一次 on_* 调用时产出并发布上一桶；
  *   - 可在收盘或测试时调用 force_flush 手动产出。
  */
-class TickTransOrders {
+class TickTransOrders : public BaseFactor{
 public:
     explicit TickTransOrders(const TickTransOrdersConfig& cfg, std::vector<std::string> codes)
-        : _cfg(cfg), _codes(std::move(codes)) {}
+        : BaseFactor("TickTransOrders", std::move(codes)), _cfg(cfg) {}
 
     /// 注册五个 topic，容量默认 120（可配置）
-    static void register_topics(size_t capacity_per_topic=120);
+    static void register_topics(size_t capacity=120);
 
     /// 喂入一条行情（用于计算增量与中价）
-    void on_quote(const QuoteDepth& q);
+    void on_quote(const QuoteDepth& q) override;
     /// 喂入一条成交（用于桶内切片）
-    void on_transaction(const Transaction& t);
+    void on_transaction(const Transaction& t) override;
     /// 喂入一条委托（用于桶内切片）
-    void on_entrust(const Entrust& e);
+    void on_entrust(const Entrust& e) override;
 
     /// 强制产出某代码的当前桶（返回是否产出成功）
-    bool force_flush(const std::string& code);
+    bool force_flush(const std::string& code) override;
 
 private:
     TickTransOrdersConfig _cfg;

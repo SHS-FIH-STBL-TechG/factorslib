@@ -37,6 +37,8 @@ target_include_directories(factorlib_utils PUBLIC include)
 # ---------- 组件：基础因子库（示例：tick_trans_orders） ----------
 add_library(factor_basic
         src/basic_factors/tick_trans_orders.cpp
+        include/ifactor.h
+        include/factor_manager.h
 )
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC include)
@@ -65,6 +67,10 @@ set(FACTORLIB_TEST_SOURCES
         tests/tick_trans_orders_test.cpp
         tests/test_wait.cpp
         tests/factor_compute_test.cpp
+        include/ifactor.h
+        include/factor_manager.h
+        src/utils/data_adapter.cpp
+        include/utils/data_adapter.h
 )
 
 add_executable(run_tests ${FACTORLIB_TEST_SOURCES})

@@ -1,4 +1,4 @@
-
+// src/basic_factors/tick_trans_orders.cpp
 #include "basic_factors/tick_trans_orders.h"
 #include "utils/log.h"
 
@@ -13,52 +13,52 @@
 
 namespace factorlib {
 
-// 层级 topic 常量
-static const char* TOP_AMOUNT  = "zyd/amount";
-static const char* TOP_VOLUME  = "zyd/volume";
-static const char* TOP_MID     = "zyd/midprice";
-static const char* TOP_TTRANS  = "zyd/tick/trans";
-static const char* TOP_TORD    = "zyd/tick/orders";
-static const char* TOP_IVTRANS = "zyd/interval/trans";
-static const char* TOP_IVORD   = "zyd/interval/orders";
+    // 层级 topic 常量
+    static const char* TOP_AMOUNT  = "zyd/amount";
+    static const char* TOP_VOLUME  = "zyd/volume";
+    static const char* TOP_MID     = "zyd/midprice";
+    static const char* TOP_TTRANS  = "zyd/tick/trans";
+    static const char* TOP_TORD    = "zyd/tick/orders";
+    static const char* TOP_IVTRANS = "zyd/interval/trans";
+    static const char* TOP_IVORD   = "zyd/interval/orders";
 
-// ---- TickTransOrders ----
+    // ---- TickTransOrders ----
 
-void TickTransOrders::register_topics(size_t cap){
-    auto& bus = DataBus::instance();
-    // 时间桶五个主题
-    bus.register_topic<double>(TOP_AMOUNT, cap);
-    bus.register_topic<int64_t>(TOP_VOLUME, cap);
-    bus.register_topic<double>(TOP_MID, cap);
-    bus.register_topic<std::vector<Transaction>>(TOP_TTRANS, cap);
-    bus.register_topic<std::vector<Entrust>>(TOP_TORD, cap);
-    // interval 两个主题（静态函数无法读实例配置，这里总是注册，发布开关由实例控制）
-    bus.register_topic<std::vector<Transaction>>(TOP_IVTRANS, cap);
-    bus.register_topic<std::vector<Entrust>>(TOP_IVORD, cap);
-}
-
-void TickTransOrders::ensure_code(const std::string& code){
-    if (_agg.find(code) == _agg.end()){
-        _agg.emplace(code, NmsBucketAggregator(_cfg.bucket_size_ms));
-        _last_tick_ms[code] = 0;
-        _interval_trans_pending[code] = {};
-        _interval_orders_pending[code] = {};
+    void TickTransOrders::register_topics(size_t cap){
+        auto& bus = DataBus::instance();
+        // 时间桶五个主题
+        bus.register_topic<double>(TOP_AMOUNT, cap);
+        bus.register_topic<int64_t>(TOP_VOLUME, cap);
+        bus.register_topic<double>(TOP_MID, cap);
+        bus.register_topic<std::vector<Transaction>>(TOP_TTRANS, cap);
+        bus.register_topic<std::vector<Entrust>>(TOP_TORD, cap);
+        // interval 两个主题（静态函数无法读实例配置，这里总是注册，发布开关由实例控制）
+        bus.register_topic<std::vector<Transaction>>(TOP_IVTRANS, cap);
+        bus.register_topic<std::vector<Entrust>>(TOP_IVORD, cap);
     }
-}
 
-void TickTransOrders::publish_bucket(const std::string& code, const BucketOutputs& out){
-    auto& bus = DataBus::instance();
-    // 使用桶的结束时间作为时间戳
-    const int64_t ts = out.bucket_end_ms;
-    bus.publish<double>(TOP_AMOUNT, code, ts, out.amount_sum);
-    bus.publish<int64_t>(TOP_VOLUME, code, ts, out.volume_sum);
-    bus.publish<double>(TOP_MID, code, ts, out.midprice_last);
-    bus.publish<std::vector<Transaction>>(TOP_TTRANS, code, ts, out.trans);
-    bus.publish<std::vector<Entrust>>(TOP_TORD, code, ts, out.orders);
-}
+    void TickTransOrders::ensure_code(const std::string& code){
+        if (_agg.find(code) == _agg.end()){
+            _agg.emplace(code, NmsBucketAggregator(_cfg.bucket_size_ms));
+            _last_tick_ms[code] = 0;
+            _interval_trans_pending[code] = {};
+            _interval_orders_pending[code] = {};
+        }
+    }
+
+    void TickTransOrders::publish_bucket(const std::string& code, const BucketOutputs& out){
+        auto& bus = DataBus::instance();
+        // 使用桶的结束时间作为时间戳
+        const int64_t ts = out.bucket_end_ms;
+        bus.publish<double>(TOP_AMOUNT, code, ts, out.amount_sum);
+        bus.publish<int64_t>(TOP_VOLUME, code, ts, out.volume_sum);
+        bus.publish<double>(TOP_MID, code, ts, out.midprice_last);
+        bus.publish<std::vector<Transaction>>(TOP_TTRANS, code, ts, out.trans);
+        bus.publish<std::vector<Entrust>>(TOP_TORD, code, ts, out.orders);
+    }
 
     void TickTransOrders::maybe_flush_and_publish(const std::string& code, int64_t now_ms) {
-    BucketOutputs out;
+        BucketOutputs out;
 
     if (_agg[code].ensure_bucket(now_ms, out)) {
         publish_bucket(code, out);

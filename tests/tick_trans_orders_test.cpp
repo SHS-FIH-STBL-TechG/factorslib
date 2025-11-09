@@ -7,15 +7,9 @@
 //    - zyd/midprice (double)
 //    - zyd/tick/trans   (std::vector<Transaction>)
 //    - zyd/tick/orders  (std::vector<Entrust>)
-// 2) 两个 tick 之间的产出（暂不支持，以下断言已注释）
+// 2) 两个 tick 之间的产出
 //    - zyd/interval/trans
 //    - zyd/interval/orders
-//
-// 重要说明：
-// - 按你要求，amount/volume/midprice 不做“两个 tick 之间”的产出（本测试也不做此类断言）。
-// - 这里假设 1107 分支的 DataBus 暴露了 register_topic<T> / get_all<T> / get_latest<T> 等方法；
-//   如你工程 API 名字或签名略有不同，请在本文件中把相应调用替换成你们现有的读取方式。
-// - TickTransOrders 的改造（增加 interval 输出）已合入；若主题名不同，请同步下面的常量。
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -31,13 +25,13 @@ using namespace factorlib;
 namespace {
 
 // 统一的主题名（与源码保持一致）
-static const char* TOP_AMOUNT  = "zyd/amount";
-static const char* TOP_VOLUME  = "zyd/volume";
-static const char* TOP_MID     = "zyd/midprice";
-static const char* TOP_TTRANS  = "zyd/tick/trans";
-static const char* TOP_TORD    = "zyd/tick/orders";
-static const char* TOP_ITRANS  = "zyd/interval/trans";
-static const char* TOP_IORD    = "zyd/interval/orders";
+static const char* TOP_AMOUNT  = "zyd/amount";    // 桶级成交额主题 - 每个时间桶内的成交额增量
+static const char* TOP_VOLUME  = "zyd/volume";    // 桶级成交量主题 - 每个时间桶内的成交量增量
+static const char* TOP_MID     = "zyd/midprice";  // 桶级中价主题 - 每个时间桶内最后一个tick的中价
+static const char* TOP_TTRANS  = "zyd/tick/trans";  // 桶级成交切片主题 - 每个时间桶内的所有成交记录
+static const char* TOP_TORD    = "zyd/tick/orders"; // 桶级委托切片主题 - 每个时间桶内的所有委托记录
+static const char* TOP_ITRANS  = "zyd/interval/trans";  // interval级成交主题 - 两个相邻tick之间的成交记录
+static const char* TOP_IORD    = "zyd/interval/orders"; // interval级委托主题 - 两个相邻tick之间的委托记录
 
 // 用于构造“当日毫秒”时间
 inline int64_t ms_of(int h,int m,int s,int ms){

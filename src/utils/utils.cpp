@@ -1,4 +1,4 @@
-
+// src/utils/utils.cpp
 #include "utils/utils.h"
 #include <algorithm>
 
@@ -14,20 +14,19 @@ namespace factorlib {
 
 /** 确保当前时间桶已建立；若跨越，则把当前桶的起止更新时间到新桶 */
     bool NmsBucketAggregator::ensure_bucket(int64_t ts_ms, BucketOutputs& out) {
-        int64_t start = (ts_ms / _bucket_ms) * _bucket_ms;
-        int64_t end = start + _bucket_ms;
+        int64_t bucket_start = (ts_ms / _bucket_ms) * _bucket_ms;
+        int64_t bucket_end = bucket_start + _bucket_ms;
 
         if (!_has_bucket) {
-            _cur = BucketOutputs{};
-            _cur.bucket_start_ms = start;
-            _cur.bucket_end_ms = end;
-            _has_bucket = true;
+            start_new_bucket(bucket_start);
             return false;
         }
 
+        // 如果当前时间已经跨越了当前桶的边界
         if (ts_ms >= _cur.bucket_end_ms) {
-            out = _cur;
-            start_new_bucket(start);
+            out = _cur;  // 产出当前桶
+            // 重要：新桶的开始应该是当前桶的结束，而不是重新计算
+            start_new_bucket(_cur.bucket_end_ms);
             return true;
         }
 
