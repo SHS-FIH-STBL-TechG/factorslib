@@ -1,0 +1,8 @@
+{
+  "cmake.generator": "Ninja",
+  "cmake.sourceDirectory": "${workspaceFolder}/factorlib_v4",
+  "cmake.buildDirectory": "${workspaceFolder}/factorlib_v4/cmake-build-release",
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "files.encoding": "utf8",
+  "editor.defaultFormatter": "ms-vscode.cpptools"
+}

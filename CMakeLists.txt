@@ -21,24 +21,36 @@ endif()
 # 需要把官方源码放到 third_party/googletest/googletest/{include,src}
 add_subdirectory(third_party/googletest)
 
+# ---------- 第三方：Eigen ----------
+set(EIGEN3_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eigen)
+if (EXISTS "${EIGEN3_INCLUDE_DIR}/Eigen/Core")
+  message(STATUS "Eigen headers detected: ${EIGEN3_INCLUDE_DIR}")
+  include_directories(${EIGEN3_INCLUDE_DIR})
+else()
+  message(WARNING "Eigen headers NOT found at ${EIGEN3_INCLUDE_DIR}")
+  message(WARNING "Please download Eigen to third_party/eigen/")
+  message(WARNING "Download from: https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz")
+endif()
+
 # ---------- 工程内公共头路径（也可逐目标设置） ----------
 include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../demo_header  # 添加 demo_header 路径
 )
 
 # ---------- 组件：工具库（日志 + 通用工具） ----------
 add_library(factorlib_utils
         src/utils/log.cpp
         src/utils/utils.cpp
+        src/utils/data_adapter.cpp  # 添加数据适配器
 )
 target_include_directories(factorlib_utils PUBLIC include)
 
-# ---------- 组件：基础因子库（示例：tick_trans_orders） ----------
+# ---------- 组件：基础因子库（现有因子 + 新因子） ----------
 add_library(factor_basic
         src/basic_factors/tick_trans_orders.cpp
-        include/ifactor.h
-        include/factor_manager.h
+        src/gaussian_copula_factor.cpp  # 添加高斯 Copula 因子
 )
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC include)
@@ -49,7 +61,7 @@ set(SPDLOG_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog/include)
 if (EXISTS "${SPDLOG_INCLUDE_DIR}/spdlog/spdlog.h")
   message(STATUS "spdlog headers detected: ${SPDLOG_INCLUDE_DIR}")
 
-  # 让日志在“编译期”不被裁剪（TRACE/DEBUG 也会编译）
+  # 让日志在"编译期"不被裁剪（TRACE/DEBUG 也会编译）
   target_compile_definitions(factorlib_utils PUBLIC USE_SPDLOG=1 SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
   target_compile_definitions(factor_basic    PUBLIC USE_SPDLOG=1 SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
 
@@ -67,10 +79,7 @@ set(FACTORLIB_TEST_SOURCES
         tests/tick_trans_orders_test.cpp
         tests/test_wait.cpp
         tests/factor_compute_test.cpp
-        include/ifactor.h
-        include/factor_manager.h
-        src/utils/data_adapter.cpp
-        include/utils/data_adapter.h
+        tests/gaussian_copula_factor_test.cpp  # 添加新因子测试
 )
 
 add_executable(run_tests ${FACTORLIB_TEST_SOURCES})
@@ -93,4 +102,18 @@ if (EXISTS "${SPDLOG_INCLUDE_DIR}/spdlog/spdlog.h")
   target_compile_definitions(run_tests PRIVATE USE_SPDLOG=1 SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE)
 endif()
 
+# 为测试添加 demo_header 路径
+target_include_directories(run_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../demo_header
+)
+
 add_test(NAME run_all COMMAND run_tests)
+
+# ---------- 安装目标（可选） ----------
+# 如果需要将库安装到系统，可以取消注释以下内容
+# install(TARGETS factorlib_utils factor_basic
+#         RUNTIME DESTINATION bin
+#         LIBRARY DESTINATION lib
+#         ARCHIVE DESTINATION lib)
+#
+# install(DIRECTORY include/ DESTINATION include)
