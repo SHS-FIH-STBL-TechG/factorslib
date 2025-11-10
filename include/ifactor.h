@@ -20,6 +20,8 @@ namespace factorlib {
         virtual void on_entrust(const Entrust& e) = 0;
 
         // 强制刷新接口
+        virtual void on_bar(const Bar& b) {}
+
         virtual bool force_flush(const std::string& code) = 0;
 
         // 获取因子名称（用于日志和监控）

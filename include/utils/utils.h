@@ -43,6 +43,19 @@ struct QuoteDepth{
     double ask_price{0.0};        ///< 卖一价
 };
 
+/// K线（Bar）数据结构
+struct Bar{
+    std::string instrument_id{};  ///< 代码
+    int64_t data_time_ms{0};      ///< K线结束时间（毫秒）
+    double open{0.0};
+    double high{0.0};
+    double low{0.0};
+    double close{0.0};
+    uint64_t volume{0};           ///< 成交量（区间内）
+    double turnover{0.0};         ///< 成交额（区间内）
+    int interval_ms{0};           ///< 周期（未知则为 0）
+};
+
 /// 成交记录（最小字段集）
 struct Transaction{
     std::string instrument_id{};

@@ -5,7 +5,7 @@
 // - 如果将来有“功能类”的测试，请放在另一个目标/入口文件（例如 feature_func_test.cpp）。
 
 #include <gtest/gtest.h>
-
+#include "gtest_printer_zh.h"
 // 如需在测试启动前后做全局初始化/清理，可在此添加自定义环境：
 // struct GlobalEnv : public ::testing::Environment {
 //     void SetUp() override {
@@ -19,6 +19,7 @@
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
+    gtest_cn::InstallCnDefaultStyle();
     // ::testing::AddGlobalTestEnvironment(new GlobalEnv());
     return RUN_ALL_TESTS();
 }

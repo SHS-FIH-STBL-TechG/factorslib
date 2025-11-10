@@ -42,6 +42,7 @@ include_directories(
 # ---------- 组件：工具库（日志 + 通用工具） ----------
 add_library(factorlib_utils
         src/utils/log.cpp
+        src/bridge/ingress.cpp
         src/utils/utils.cpp
         src/utils/data_adapter.cpp  # 添加数据适配器
 )
@@ -79,10 +80,12 @@ set(FACTORLIB_TEST_SOURCES
         tests/tick_trans_orders_test.cpp
         tests/test_wait.cpp
         tests/factor_compute_test.cpp
-        tests/gaussian_copula_factor_test.cpp  # 添加新因子测试
+        tests/gaussian_copula_factor_test.cpp
+        tests/gtest_printer_zh.h  # 添加新因子测试
 )
 
-add_executable(run_tests ${FACTORLIB_TEST_SOURCES})
+add_executable(run_tests ${FACTORLIB_TEST_SOURCES}
+        tests/gtest_printer_zh.h)
 target_link_libraries(run_tests PRIVATE
         factor_basic
         factorlib_utils
