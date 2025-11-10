@@ -1,13 +1,15 @@
 //  src/basic_factors/tick_trans_orders.h
 #pragma once
 #include <string>
-#include <vector>
 #include <unordered_map>
+#include <vector>
 
 #include "ifactor.h"
-#include "utils/utils.h"
 #include "utils/databus.h"
 #include "utils/log.h"
+#include "utils/nms_bucket_aggregator.h"
+#include "utils/trading_time.h"
+#include "utils/types.h"
 
 /**
  * @file tick_trans_orders.h

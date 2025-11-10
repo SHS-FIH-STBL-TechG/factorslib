@@ -1,8 +1,8 @@
 // src/bridge/ingress.cpp
 #include "factorlib/bridge/ingress.h"
-#include "utils/data_adapter.h"
 #include "ifactor.h"
-#include "utils/utils.h"
+#include "utils/data_adapter.h"
+#include "utils/types.h"
 
 namespace {
     std::vector<std::shared_ptr<factorlib::IFactor>> g_factors;

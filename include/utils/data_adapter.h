@@ -1,7 +1,8 @@
 // include/utils/data_adapter.h
 #pragma once
-#include "utils/utils.h"
 #include <string>
+#include "utils/trading_time.h"
+#include "utils/types.h"
 
 struct SnapshotStockSH;
 struct std_SnapshotStockSZ;

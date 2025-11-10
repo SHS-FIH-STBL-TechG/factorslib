@@ -1,13 +1,14 @@
 // src/gaussian_copula_factor.h
 #pragma once
-#include <string>
-#include <vector>
-#include <deque>
 #include <algorithm>
 #include <cmath>
-#include "utils/utils.h"
+#include <deque>
+#include <string>
+#include <vector>
+
 #include "utils/databus.h"
 #include "utils/log.h"
+#include "utils/types.h"
 
 /**
  * @file gaussian_copula_factor.h

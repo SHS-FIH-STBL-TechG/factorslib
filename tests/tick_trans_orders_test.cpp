@@ -18,7 +18,7 @@
 
 #include "basic_factors/tick_trans_orders.h"
 #include "utils/databus.h"
-#include "utils/utils.h"
+#include "utils/types.h"
 
 using namespace factorlib;
 
@@ -157,7 +157,6 @@ TEST_F(TickTransOrdersFixture, BucketAggregation_BasicFunctionality)
     auto& bus = DataBus::instance();
 
     std::cout << "=== 开始桶聚合测试 ===" << std::endl;
-    bus.debug_print_topics();
 
     // 第一个桶内的数据
     QuoteDepth q{};
@@ -209,9 +208,6 @@ TEST_F(TickTransOrdersFixture, BucketAggregation_BasicFunctionality)
 
     // 强制刷新当前桶，确保第二个桶的数据被发布
     factor->force_flush(code);
-
-    // 最终检查
-    bus.debug_print_topics();
 
     auto amounts = bus.get_last_n<double>(TOP_AMOUNT, code, 10);
     auto volumes = bus.get_last_n<int64_t>(TOP_VOLUME, code, 10);

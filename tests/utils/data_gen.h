@@ -1,7 +1,10 @@
 // tests/utils/data_gen.h
 #pragma once
 #include <vector>
-#include "utils/utils.h"
+#include "utils/types.h"                    // 只需要数据类型
+#include "utils/trading_time.h"             // 需要交易时间函数
+#include "utils/math_utils.h"               // 需要数学工具
+#include "utils/nms_bucket_aggregator.h"    // 需要时间桶聚合器
 
 /**
  * @file data_gen.h

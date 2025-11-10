@@ -2,7 +2,7 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "utils/utils.h"
+#include "utils/types.h"
 
 namespace factorlib {
 

@@ -1,9 +1,12 @@
 // tests/gaussian_copula_factor_test.cpp
-#include <gtest/gtest.h>
-#include <cmath>
 #include "gaussian_copula_factor.h"
+#include <cmath>
+#include <gtest/gtest.h>
 #include "utils/databus.h"
-#include "utils/utils.h"
+#include "utils/math_utils.h"
+#include "utils/trading_time.h"
+#include "utils/types.h"
+
 
 using namespace factorlib;
 

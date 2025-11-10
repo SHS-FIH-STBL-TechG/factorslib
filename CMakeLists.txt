@@ -43,15 +43,22 @@ include_directories(
 add_library(factorlib_utils
         src/utils/log.cpp
         src/bridge/ingress.cpp
-        src/utils/utils.cpp
-        src/utils/data_adapter.cpp  # 添加数据适配器
+        src/utils/data_adapter.cpp
+        include/utils/types.h
+        src/utils/trading_time.cpp
+        include/utils/trading_time.h
+        src/utils/math_utils.cpp
+        include/utils/math_utils.h
+        src/utils/nms_bucket_aggregator.cpp
+        include/utils/nms_bucket_aggregator.h  # 添加数据适配器
 )
 target_include_directories(factorlib_utils PUBLIC include)
 
 # ---------- 组件：基础因子库（现有因子 + 新因子） ----------
 add_library(factor_basic
         src/basic_factors/tick_trans_orders.cpp
-        src/gaussian_copula_factor.cpp  # 添加高斯 Copula 因子
+        src/gaussian_copula_factor.cpp
+        include/utils/types.h  # 添加高斯 Copula 因子
 )
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC include)
