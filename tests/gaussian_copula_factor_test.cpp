@@ -1,3 +1,4 @@
+// tests/gaussian_copula_factor_test.cpp
 #include <gtest/gtest.h>
 #include <cmath>
 #include "gaussian_copula_factor.h"

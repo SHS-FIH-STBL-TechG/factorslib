@@ -1,3 +1,4 @@
+// src/gaussian_copula_factor.cpp
 #include "gaussian_copula_factor.h"
 #include <Eigen/Dense>  // 需要添加Eigen库依赖
 

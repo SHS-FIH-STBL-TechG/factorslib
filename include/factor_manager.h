@@ -1,4 +1,4 @@
-// include/core/factor_manager.h
+// include/factor_manager.h
 #pragma once
 #include <memory>
 #include <unordered_map>
