@@ -1,11 +1,11 @@
-// include/utils/log.h
+// include/utils/log.h (优化版本)
 #pragma once
 /**
  * Simple logging facade for factorlib.
  * If USE_SPDLOG is defined and headers are available, map to spdlog.
  * Otherwise fall back to fprintf(stderr, ...).
  */
- 
+
 #ifdef USE_SPDLOG
   #include <spdlog/spdlog.h>
   #include <spdlog/sinks/stdout_color_sinks.h>
@@ -16,6 +16,27 @@
 namespace factorlib {
 namespace log {
 
+// 定义日志级别
+enum class LogLevel {
+    TRACE = 0,
+    DEBUG = 1,
+    INFO = 2,
+    WARN = 3,
+    ERROR = 4,
+    OFF = 5
+};
+
+// 获取当前日志级别
+inline LogLevel get_log_level() {
+#ifdef NDEBUG
+    // Release模式默认级别
+    return LogLevel::INFO;
+#else
+    // Debug模式默认级别
+    return LogLevel::DEBUG;
+#endif
+}
+
 // initialize logging once per process (no-op for fallback)
 inline void init_logging_once() {
 #ifdef USE_SPDLOG
@@ -24,7 +45,14 @@ inline void init_logging_once() {
         // use colored console sink
         auto logger = spdlog::stdout_color_mt("factorlib");
         spdlog::set_default_logger(logger);
-        spdlog::set_level(spdlog::level::trace);
+
+        // 根据编译模式设置日志级别
+        #ifdef NDEBUG
+        spdlog::set_level(spdlog::level::info);  // Release模式
+        #else
+        spdlog::set_level(spdlog::level::debug); // Debug模式
+        #endif
+
         spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
         inited = true;
     }
@@ -34,9 +62,18 @@ inline void init_logging_once() {
 } // namespace log
 } // namespace factorlib
 
+// 条件编译的日志宏
 #ifdef USE_SPDLOG
-  #define LOG_TRACE(...) do { ::factorlib::log::init_logging_once(); spdlog::trace(__VA_ARGS__); } while(0)
-  #define LOG_DEBUG(...) do { ::factorlib::log::init_logging_once(); spdlog::debug(__VA_ARGS__); } while(0)
+  #ifdef NDEBUG
+    // Release模式：移除TRACE和DEBUG日志
+    #define LOG_TRACE(...)
+    #define LOG_DEBUG(...)
+  #else
+    // Debug模式：包含所有日志
+    #define LOG_TRACE(...) do { ::factorlib::log::init_logging_once(); spdlog::trace(__VA_ARGS__); } while(0)
+    #define LOG_DEBUG(...) do { ::factorlib::log::init_logging_once(); spdlog::debug(__VA_ARGS__); } while(0)
+  #endif
+  // INFO/WARN/ERROR在所有模式下都保留
   #define LOG_INFO(...)  do { ::factorlib::log::init_logging_once(); spdlog::info(__VA_ARGS__); } while(0)
   #define LOG_WARN(...)  do { ::factorlib::log::init_logging_once(); spdlog::warn(__VA_ARGS__); } while(0)
   #define LOG_ERROR(...) do { ::factorlib::log::init_logging_once(); spdlog::error(__VA_ARGS__); } while(0)
@@ -49,8 +86,17 @@ inline void init_logging_once() {
     std::fprintf(stderr, "\n");
     std::fflush(stderr);
   }
-  #define LOG_TRACE(...) __flog_fallback("TRACE", __VA_ARGS__)
-  #define LOG_DEBUG(...) __flog_fallback("DEBUG", __VA_ARGS__)
+
+  #ifdef NDEBUG
+    // Release模式：移除TRACE和DEBUG日志
+    #define LOG_TRACE(...)
+    #define LOG_DEBUG(...)
+  #else
+    // Debug模式：包含所有日志
+    #define LOG_TRACE(...) __flog_fallback("TRACE", __VA_ARGS__)
+    #define LOG_DEBUG(...) __flog_fallback("DEBUG", __VA_ARGS__)
+  #endif
+  // INFO/WARN/ERROR在所有模式下都保留
   #define LOG_INFO(...)  __flog_fallback("INFO",  __VA_ARGS__)
   #define LOG_WARN(...)  __flog_fallback("WARN",  __VA_ARGS__)
   #define LOG_ERROR(...) __flog_fallback("ERROR", __VA_ARGS__)

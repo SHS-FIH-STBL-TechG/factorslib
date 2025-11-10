@@ -44,21 +44,17 @@ add_library(factorlib_utils
         src/utils/log.cpp
         src/bridge/ingress.cpp
         src/utils/data_adapter.cpp
-        include/utils/types.h
         src/utils/trading_time.cpp
-        include/utils/trading_time.h
-        src/utils/math_utils.cpp
-        include/utils/math_utils.h
         src/utils/nms_bucket_aggregator.cpp
-        include/utils/nms_bucket_aggregator.h  # 添加数据适配器
+        include/utils/math/incremental_rank.h
+        # 注意：移除了 math_utils.cpp
 )
 target_include_directories(factorlib_utils PUBLIC include)
 
 # ---------- 组件：基础因子库（现有因子 + 新因子） ----------
 add_library(factor_basic
         src/basic_factors/tick_trans_orders.cpp
-        src/gaussian_copula_factor.cpp
-        include/utils/types.h  # 添加高斯 Copula 因子
+        src/gaussian_copula_factor.cpp  # 添加高斯 Copula 因子
 )
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC include)
@@ -88,7 +84,8 @@ set(FACTORLIB_TEST_SOURCES
         tests/test_wait.cpp
         tests/factor_compute_test.cpp
         tests/gaussian_copula_factor_test.cpp
-        tests/gtest_printer_zh.h  # 添加新因子测试
+        tests/gtest_printer_zh.h
+        src/utils/nms_bucket_aggregator.cpp
 )
 
 add_executable(run_tests ${FACTORLIB_TEST_SOURCES}
@@ -118,12 +115,3 @@ target_include_directories(run_tests PRIVATE
 )
 
 add_test(NAME run_all COMMAND run_tests)
-
-# ---------- 安装目标（可选） ----------
-# 如果需要将库安装到系统，可以取消注释以下内容
-# install(TARGETS factorlib_utils factor_basic
-#         RUNTIME DESTINATION bin
-#         LIBRARY DESTINATION lib
-#         ARCHIVE DESTINATION lib)
-#
-# install(DIRECTORY include/ DESTINATION include)

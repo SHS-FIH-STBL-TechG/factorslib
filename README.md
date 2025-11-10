@@ -1,106 +1,112 @@
 # FactorLib - 量化因子计算框架
 
-## 📖 项目概述
+## 📋 项目概述
 
-FactorLib 是一个**专业级量化因子计算框架**，专为高频量化交易场景设计。它提供了一个标准化的因子开发、管理和数据流处理平台，让量化研究员能够专注于因子逻辑本身，而不必担心数据流、时间对齐和依赖管理等复杂工程问题。
+FactorLib 是一个专为金融量化分析设计的C++因子计算框架，提供高效、可扩展的因子实现和数据处理工具。框架采用模块化设计，支持从基础因子到复杂统计模型的全套计算流程。
 
 ### 🎯 核心设计理念
 
-1. **统一接口规范**：所有因子都实现统一的 `IFactor` 接口，确保一致的开发体验
-2. **数据总线机制**：通过 `DataBus` 实现因子间的数据共享和依赖管理
-3. **时间桶聚合**：自动处理高频数据的时序对齐问题，确保计算一致性
-4. **最小入侵设计**：通过桥接层与外部系统解耦，易于集成到现有系统
-5. **类型安全**：模板化的数据总线确保数据类型安全
-6. **模块化架构**：清晰的职责分离，便于维护和扩展
+1. **统一接口规范**：通过 `IFactor` 基类确保所有因子遵循相同的接口契约
+2. **数据驱动架构**：基于 `DataBus` 实现因子间的松耦合通信
+3. **时序处理优化**：`NmsBucketAggregator` 提供精确的时间桶聚合
+4. **增量计算**：支持滑动窗口统计量的高效更新
+5. **多源数据适配**：通过 `DataAdapter` 统一不同数据源格式
 
 ## 🏗️ 项目架构详解
 
-### 优化后的目录结构
+### 目录结构
 
 ```
 factors_lib/
-├── include/                    # 公共头文件（对外接口）
-│   ├── factor_manager.h       # 因子管理器 - 统一管理所有因子实例
-│   ├── ifactor.h              # 因子接口定义 - 所有因子的基类
+├── CMakeLists.txt              # 项目构建配置
+├── include/                    # 公共头文件
 │   ├── factorlib/bridge/
-│   │   └── ingress.h          # 数据入口桥接层 - 最小化外部依赖
-│   └── utils/                 # 工具库（模块化设计）
-│       ├── types.h            # 公共数据类型定义 - 标准数据结构
-│       ├── trading_time.h     # 交易时间工具 - 时段判断和日期处理
-│       ├── math_utils.h       # 数学计算工具 - 统计和数学函数
-│       ├── nms_bucket_aggregator.h # 时间桶聚合器 - 时序对齐引擎
-│       ├── data_adapter.h     # 数据格式适配器 - 外部数据→内部标准格式
-│       ├── databus.h          # 数据总线（核心） - 因子间通信枢纽
-│       └── log.h              # 日志系统 - 统一日志接口
-├── src/                       # 实现文件
+│   │   └── ingress.h          # 数据入口桥接接口
+│   ├── ifactor.h              # 因子基类接口定义
+│   └── utils/                 # 工具类头文件
+│       ├── data_adapter.h     # 多源数据格式转换
+│       ├── databus.h          # 数据总线通信系统
+│       ├── log.h              # 分级日志系统
+│       ├── math/              # 数学工具库
+│       │   ├── distributions.h    # 概率分布计算
+│       │   ├── incremental_rank.h # 增量排名算法
+│       │   ├── linear_algebra.h   # 线性代数运算
+│       │   ├── numeric_utils.h    # 数值工具函数
+│       │   └── statistics.h       # 统计计算
+│       ├── nms_bucket_aggregator.h # 时间桶聚合器
+│       ├── trading_time.h     # 交易时间处理
+│       └── types.h            # 统一数据类型定义
+├── src/                       # 源文件实现
 │   ├── basic_factors/         # 基础因子实现
-│   │   ├── tick_trans_orders.cpp  # 基础因子示例：时间桶聚合
+│   │   ├── tick_trans_orders.cpp  # Tick数据转换因子
 │   │   └── tick_trans_orders.h
-│   ├── gaussian_copula_factor.cpp # 复杂因子示例：高斯Copula模型
-│   ├── gaussian_copula_factor.h
 │   ├── bridge/
-│   │   └── ingress.cpp        # 桥接层实现 - 数据路由和分发
-│   └── utils/                 # 工具实现（模块化）
-│       ├── trading_time.cpp   # 交易时间逻辑实现
-│       ├── math_utils.cpp     # 数学工具实现
-│       ├── nms_bucket_aggregator.cpp # 时间桶聚合器实现
-│       ├── data_adapter.cpp   # 数据转换逻辑
-│       └── log.cpp            # 日志系统实现
+│   │   └── ingress.cpp        # 数据入口实现
+│   ├── gaussian_copula_factor.cpp # 高斯Copula因子
+│   ├── gaussian_copula_factor.h
+│   └── utils/                 # 工具类实现
+│       ├── data_adapter.cpp   # 数据适配器
+│       ├── log.cpp            # 日志系统
+│       ├── nms_bucket_aggregator.cpp # 时间桶聚合
+│       └── trading_time.cpp   # 交易时间
 ├── tests/                     # 测试代码
-│   ├── factor_compute_test.cpp    # 测试主入口
-│   ├── gaussian_copula_factor_test.cpp # 复杂因子测试
-│   ├── tick_trans_orders_test.cpp # 基础因子测试
-│   ├── test_wait.cpp          # 数据总线等待功能测试
-│   └── utils/data_gen.h       # 测试数据生成工具
-├── docs/                      # 文档
-│   ├── CONFIRMED.md
-│   ├── Logging.md
-│   ├── Manual.md
-│   └── demo_wiring.md
-└── demo_header/               # 使用示例（外部依赖）
-    ├── AppDemo.cpp
-    ├── AppDemo.h
-    └── ...
+│   ├── factor_compute_test.cpp    # 因子计算测试
+│   ├── gaussian_copula_factor_test.cpp # 高斯Copula测试
+│   ├── gtest_printer_zh.h     # 中文测试输出
+│   ├── test_wait.cpp          # 测试等待工具
+│   ├── tick_trans_orders_test.cpp # Tick转换测试
+│   └── utils/
+│       └── data_gen.h         # 测试数据生成器
+└── third_party/               # 第三方依赖
+    ├── eigen/                 # Eigen线性代数库
+    ├── googletest/            # GoogleTest测试框架
+    └── spdlog/                # spdlog日志库
 ```
 
-### 🔧 核心组件深度解析
+### 🎪 核心组件深度解析
 
 #### 1. 因子接口 (IFactor) - 统一的因子契约
 
-所有因子都必须继承自 `IFactor` 接口，这确保了框架的一致性：
+**设计目标**：为所有因子提供统一的接口规范，确保代码的一致性和可维护性。
 
+**核心接口**：
 ```cpp
 class IFactor {
 public:
     virtual ~IFactor() = default;
     
-    // 核心数据处理接口 - 必须实现
-    virtual void on_quote(const QuoteDepth& q) = 0;      // 处理行情数据
-    virtual void on_transaction(const Transaction& t) = 0; // 处理成交数据
-    virtual void on_entrust(const Entrust& e) = 0;       // 处理委托数据
+    // 核心数据处理接口
+    virtual void on_quote(const QuoteDepth& q) = 0;
+    virtual void on_transaction(const Transaction& t) = 0;
+    virtual void on_entrust(const Entrust& e) = 0;
     
-    // 强制刷新接口 - 必须实现
+    // 强制刷新接口
+    virtual void on_bar(const Bar& b) {}
     virtual bool force_flush(const std::string& code) = 0;
     
-    // 元信息接口 - 必须实现
-    virtual std::string get_name() const = 0;           // 因子标识
-    virtual const std::vector<std::string>& get_codes() const = 0; // 监控代码
+    // 元数据接口
+    virtual std::string get_name() const = 0;
+    virtual const std::vector<std::string>& get_codes() const = 0;
 };
 ```
 
-**基础因子抽象类** `BaseFactor` 提供了通用实现：
+**实现特点**：
+- **事件驱动设计**：通过 `on_quote`、`on_transaction`、`on_entrust` 方法处理不同类型的数据
+- **强制刷新机制**：`force_flush` 方法确保在收盘或特定时刻输出计算结果
+- **多代码支持**：单个因子实例可以同时监控多个股票代码
 
+**BaseFactor 基类**：
 ```cpp
 class BaseFactor : public IFactor {
 protected:
-    std::vector<std::string> _codes;  // 监控的股票代码列表
-    std::string _name;                // 因子名称
-
+    std::vector<std::string> _codes;
+    std::string _name;
+    
 public:
     BaseFactor(const std::string& name, std::vector<std::string> codes)
         : _name(name), _codes(std::move(codes)) {}
-
-    // 默认实现
+    
+    // 提供默认实现
     std::string get_name() const override { return _name; }
     const std::vector<std::string>& get_codes() const override { return _codes; }
 };
@@ -108,120 +114,219 @@ public:
 
 #### 2. 数据总线 (DataBus) - 因子通信的神经系统
 
-数据总线是框架的核心，提供类型安全的发布-订阅机制：
+**设计目标**：实现因子间的松耦合通信，支持类型安全的数据交换和时间对齐。
 
-**核心特性：**
-- **主题注册**：每个主题绑定特定数据类型
-- **环形缓冲区**：保留历史数据，自动淘汰旧数据
-- **多维度索引**：按 (主题, 代码, 时间戳) 三维索引
-- **阻塞等待**：支持跨因子数据依赖的同步
+**核心特性**：
+- **类型安全**：每个Topic绑定特定数据类型，编译期检查
+- **时间对齐**：支持按精确时间戳读取数据
+- **环形历史**：自动淘汰旧数据，内存可控
+- **多种访问模式**：支持拉取、订阅、阻塞等待
 
-**关键API：**
+**关键API详解**：
 
+**注册Topic**：
 ```cpp
-class DataBus {
-public:
-    static DataBus& instance();  // 单例模式
-    
-    // 主题管理
-    template<typename T>
-    void register_topic(const std::string& topic, size_t capacity=120);
-    
-    // 数据发布
-    template<typename T>
-    void publish(const std::string& topic, const std::string& code, 
-                 int64_t ts_ms, const T& value);
-    
-    // 数据消费
-    template<typename T>
-    bool get_latest(const std::string& topic, const std::string& code, 
-                    T& out, int64_t* ts_ms=nullptr) const;
-    
-    // 订阅机制
-    template<typename T>
-    void subscribe(const std::string& topic, const std::string& code,
-                   std::function<void(const std::string&, int64_t, const T&)> cb);
-    
-    // 阻塞等待（用于因子依赖）
-    template<typename T>
-    bool wait_for_time_exact(const std::string& topic, const std::string& code,
-                             int64_t ts_ms, T& out, int64_t timeout_ms = 1000);
-};
+template<typename T>
+void register_topic(const std::string& topic, size_t capacity=120);
+```
+- `topic`：层级主题名，如 `"zyd/amount"`
+- `capacity`：环形缓冲区容量，控制内存使用
+
+**发布数据**：
+```cpp
+template<typename T>
+void publish(const std::string& topic, const std::string& code, 
+             int64_t ts_ms, const T& value);
+```
+- `ts_ms`：建议使用"桶结束时间"确保时间对齐
+- 自动唤醒等待该数据的订阅者
+
+**数据读取模式**：
+```cpp
+// 1. 读取最新数据
+bool get_latest(const std::string& topic, const std::string& code, 
+                T& out, int64_t* ts_ms=nullptr);
+
+// 2. 按精确时间戳读取
+bool get_by_time_exact(const std::string& topic, const std::string& code, 
+                       int64_t ts_ms, T& out);
+
+// 3. 读取最近N条数据
+std::vector<std::pair<int64_t, T>> get_last_n(const std::string& topic, 
+                                              const std::string& code, size_t n);
+```
+
+**订阅机制**：
+```cpp
+template<typename T>
+void subscribe(const std::string& topic, const std::string& code,
+               std::function<void(const std::string&, int64_t, const T&)> cb);
+```
+- 发布数据时自动触发回调
+- 支持同一个Topic的多个订阅者
+
+**阻塞等待**：
+```cpp
+// 等待精确时间戳的数据
+bool wait_for_time_exact(const std::string& topic, const std::string& code,
+                         int64_t ts_ms, T& out, int64_t timeout_ms = 1000);
+
+// 等待不早于指定时间戳的数据
+bool wait_for_time_at_least(const std::string& topic, const std::string& code,
+                            int64_t ts_ms, T& out, int64_t timeout_ms = 1000);
 ```
 
 #### 3. 时间桶聚合器 (NmsBucketAggregator) - 时序对齐引擎
 
-专门处理高频数据的时间对齐问题：
+**设计目标**：将高频数据聚合到固定时间桶，为因子计算提供时间对齐的输入。
 
+**核心算法**：
 ```cpp
 class NmsBucketAggregator {
 public:
     explicit NmsBucketAggregator(int64_t bucket_ms=1000);
     
-    void on_quote(const QuoteDepth& q);      // 计算成交额/成交量增量
-    void on_transaction(const Transaction& t); // 收集成交切片
-    void on_entrust(const Entrust& e);       // 收集委托切片
+    // 数据输入接口
+    void on_quote(const QuoteDepth& q);      // 用于计算amount/volume和更新midprice
+    void on_transaction(const Transaction& t); // 仅用于桶切片
+    void on_entrust(const Entrust& e);       // 仅用于桶切片
     
-    bool flush_if_crossed(int64_t now_ms, BucketOutputs& out); // 检查桶边界
-    bool force_flush(BucketOutputs& out);    // 强制产出
+    // 桶产出接口
+    bool flush_if_crossed(int64_t now_ms, BucketOutputs& out);
+    bool force_flush(BucketOutputs& out);
+    bool ensure_bucket(int64_t ts_ms, BucketOutputs& out);
 };
 ```
 
-**时间桶工作原理：**
+**聚合输出结构**：
+```cpp
+struct BucketOutputs {
+    double amount_sum = 0.0;              // 成交额累计
+    int64_t volume_sum = 0;               // 成交量累计
+    double midprice_last = 0.0;           // 最后中间价
+    std::vector<Transaction> trans;       // 桶内成交记录
+    std::vector<Entrust> orders;          // 桶内委托记录
+    int64_t bucket_start_ms = 0;          // 桶开始时间
+    int64_t bucket_end_ms = 0;            // 桶结束时间
+};
 ```
-时间轴: 09:30:00.000 ──── 09:30:01.000 ──── 09:30:02.000 ────→
-桶划分:    桶1    │       桶2     │       桶3     │
-数据流入:  Q1,T1 │ Q2,E1 │ Q3,T2 │ Q4    │ Q5,T3  │
-          │      │       │       │       │        │
-产出时机:        ↓产出桶1 ↓       ↓产出桶2 ↓       ↓产出桶3
-```
+
+**增量计算优化**：
+- 维护上一次行情状态，避免重复计算
+- 支持跨交易日的volume/turnover重置
+- 智能桶边界检测，确保数据完整性
 
 #### 4. 模块化工具组件
 
-**数据类型 (types.h)** - 纯数据结构定义
+##### 数据类型 (types.h)
+
+**统一数据结构定义**：
 ```cpp
-// 标准化的数据结构，不包含业务逻辑
-struct QuoteDepth, Transaction, Entrust, Bar, BucketOutputs;
+// L2行情数据
+struct QuoteDepth {
+    std::string instrument_id{};     // 合约代码
+    int64_t data_time_ms{0};         // 数据时间戳(毫秒)
+    int trading_day{0};              // 交易日(YYYYMMDD)
+    uint64_t volume{0};              // 成交量
+    double turnover{0.0};            // 成交额
+    double bid_price{0.0};           // 买一价
+    double ask_price{0.0};           // 卖一价
+};
+
+// 成交记录
+struct Transaction {
+    std::string instrument_id{};
+    int64_t data_time_ms{0};
+    uint64_t main_seq{0};            // 主推序号
+    double price{0.0};               // 成交价格
+    int side{0};                     // 买卖方向
+    uint64_t volume{0};              // 成交数量
+    uint64_t bid_no{0};              // 买方订单号
+    uint64_t ask_no{0};              // 卖方订单号
+};
+
+// 委托记录  
+struct Entrust {
+    std::string instrument_id{};
+    int64_t data_time_ms{0};
+    uint64_t main_seq{0};
+    double price{0.0};
+    int side{0};                     // 1:买, -1:卖
+    uint64_t volume{0};
+    uint64_t order_id{0};            // 委托订单号
+};
 ```
 
-**交易时间工具 (trading_time.h/cpp)** - 时段判断
+##### 交易时间工具 (trading_time.h/cpp)
+
+**核心功能**：
 ```cpp
 class TradingTime {
+public:
+    // A股日盘交易时段判断
     static bool in_trading_session_ms(int64_t ms);
+    
+    // 集合竞价时段判断
     static bool in_call_auction_ms(int64_t ms);
+    
+    // 获取下一个交易时段开始时间
     static int64_t next_trading_session_start(int64_t current_ms);
+    
+    // 有效交易日判断（排除周末和节假日）
+    static bool is_valid_trading_day(int trading_day);
 };
 ```
 
-**数学工具 (math_utils.h/cpp)** - 统计计算
+##### 数学工具 (math工具集)
+
+**统计计算** (`statistics.h`)：
 ```cpp
-class MathUtils {
-    static double mean(const std::vector<double>& data);
-    static double stddev(const std::vector<double>& data);
-    static double quantile(const std::vector<double>& data, double percentile);
-    static double normal_quantile(double p);
+template<typename T>
+class Statistics {
+public:
+    // 基础统计量
+    template<typename Container> static double mean(const Container& data);
+    template<typename Container> static double stddev(const Container& data);
+    template<typename Container> static double median(const Container& data);
+    
+    // 分位数计算
+    template<typename Container> static double quantile(const Container& data, double percentile);
+    
+    // 相关性分析
+    template<typename Container1, typename Container2> 
+    static double correlation(const Container1& x, const Container2& y);
+    
+    // 滑动窗口统计
+    template<typename Container> 
+    static std::vector<double> rolling_mean(const Container& data, size_t window_size);
 };
 ```
+
+**增量排名计算** (`incremental_rank.h`)：
+- O(log n) 时间复杂度的滑动窗口排名计算
+- 支持中位秩、分位数等统计量
+- 内存高效的排序维护
 
 #### 5. 数据适配器 (DataAdapter) - 格式转换层
 
-将外部数据格式转换为内部标准格式：
-
+**多源数据支持**：
 ```cpp
 class DataAdapter {
 public:
-    // 外部快照 → 内部QuoteDepth
+    // 不同交易所快照数据转换
     static QuoteDepth from_snapshot_sh(const SnapshotStockSH& snapshot);
     static QuoteDepth from_snapshot_sz(const std_SnapshotStockSZ& snapshot);
     
-    // 委托成交 → 内部Transaction/Entrust
+    // 成交数据转换
     static Transaction from_ord_exec(const OrdAndExeInfo& ord_exec);
+    
+    // 逐笔数据拆分
     static bool is_trade(const OrdAndExeInfo& x);
     static Transaction to_transaction(const OrdAndExeInfo& x);
     static Entrust to_entrust(const OrdAndExeInfo& x);
     
-    // K线转换
-    static Bar from_kline(const BasicandEnhanceKLine& k);
+    // 价格标准化
+    static double normalize_price(uint32_t raw_price);
 };
 ```
 
@@ -229,250 +334,242 @@ public:
 
 ### 环境要求
 
-- **C++17** 兼容编译器 (GCC 7+, Clang 5+, MSVC 2019+)
-- **CMake** 3.15+
-- **第三方依赖**:
-   - Eigen3 (线性代数计算)
-   - GoogleTest (测试框架，可选)
-   - spdlog (日志系统，可选)
+- **操作系统**：Linux / Windows / macOS
+- **编译器**：支持 C++17 (GCC 7+, Clang 5+, MSVC 2019+)
+- **构建工具**：CMake 3.10+
+- **内存**：建议 8GB+
+- **磁盘空间**：500MB+（包含第三方依赖）
 
 ### 构建项目
 
+**标准构建流程**：
 ```bash
-# 克隆项目
+# 克隆项目（如使用版本控制）
 git clone <repository-url>
 cd factors_lib
 
 # 创建构建目录
 mkdir build && cd build
 
-# 配置项目（确保第三方库已放置在 third_party/ 目录）
-cmake ..
+# 配置项目
+cmake .. -DCMAKE_BUILD_TYPE=Release
 
 # 编译
 make -j$(nproc)
 
 # 运行测试
-./run_tests
+ctest --output-on-failure
+```
+
+**Windows构建**：
+```cmd
+# 使用Visual Studio
+mkdir build && cd build
+cmake .. -G "Visual Studio 16 2019" -A x64
+cmake --build . --config Release
 ```
 
 ### 基本使用示例
 
+**1. 初始化因子计算环境**：
 ```cpp
-#include "factorlib/bridge/ingress.h"
-#include "basic_factors/tick_trans_orders.h"
-#include "utils/types.h"
-#include "utils/trading_time.h"
+#include "factors_lib/include/ifactor.h"
+#include "factors_lib/include/utils/databus.h"
+#include "factors_lib/include/utils/log.h"
 
-// 初始化因子系统
-void initialize_factor_system() {
-    // 1. 注册数据总线主题（必须在创建因子前调用）
-    TickTransOrders::register_topics(120); // 120条历史数据容量
-    
-    // 2. 创建因子配置
-    TickTransOrdersConfig config;
-    config.bucket_size_ms = 1000;      // 1秒时间桶
-    config.emit_tick_interval = true;  // 发布tick间切片数据
-    
-    // 3. 创建因子实例
-    std::vector<std::string> monitor_codes = {"000001.SZ", "000002.SZ"};
-    auto factor = std::make_shared<TickTransOrders>(config, monitor_codes);
-    
-    // 4. 注册到系统
-    std::vector<std::shared_ptr<factorlib::IFactor>> factors = {factor};
-    factorlib::bridge::set_factors(factors);
-}
+// 初始化日志系统
+auto logger = factors_lib::utils::log::init_logger("MyFactorApp");
+logger->info("开始因子计算");
 
-// 在数据回调中喂入数据
-void on_market_data(const std::vector<SnapshotStockSH>& snapshots) {
-    factorlib::bridge::ingest_snapshot(snapshots);
-}
-
-void on_order_data(const std::vector<OrdAndExeInfo>& orders) {
-    factorlib::bridge::ingest_ont(orders);
-}
+// 注册数据总线主题
+factors_lib::TickTransOrders::register_topics(120);
+factors_lib::GaussianCopulaFactor::register_topics(60);
 ```
 
-## 📈 如何添加新因子
+**2. 创建并运行基础因子**：
+```cpp
+// 配置Tick转换因子
+factors_lib::TickTransOrdersConfig tick_cfg;
+tick_cfg.bucket_size_ms = 1000;  // 1秒时间桶
+tick_cfg.emit_tick_interval = true;
+
+std::vector<std::string> codes = {"000001.SZ", "600000.SH"};
+auto tick_factor = factors_lib::TickTransOrders(tick_cfg, codes);
+
+// 处理行情数据
+factors_lib::QuoteDepth quote;
+quote.instrument_id = "000001.SZ";
+quote.data_time_ms = 1704065400000;  // 2024-01-01 09:30:00
+quote.bid_price = 10.0;
+quote.ask_price = 10.2;
+quote.volume = 1000;
+quote.turnover = 10000.0;
+
+tick_factor.on_quote(quote);
+```
+
+**3. 使用数据总线获取计算结果**：
+```cpp
+auto& bus = factors_lib::DataBus::instance();
+
+// 读取最新成交额
+double amount;
+int64_t timestamp;
+if (bus.get_latest<double>("zyd/amount", "000001.SZ", amount, &timestamp)) {
+    logger->info("股票 {} 在 {} 的成交额: {}", "000001.SZ", timestamp, amount);
+}
+
+// 订阅数据更新
+bus.subscribe<double>("zyd/amount", "000001.SZ", 
+    [](const std::string& code, int64_t ts, const double& value) {
+        std::cout << "实时成交额更新: " << code << " at " << ts 
+                  << " = " << value << std::endl;
+    });
+```
+
+## 🔧 如何添加新因子
 
 ### 步骤1：确定因子类型
 
 #### A. 基础因子 - 直接从原始数据计算
 
-**特征：**
-- 直接消费行情、成交、委托等原始数据
-- 不依赖其他因子的输出
-- 通常包含时间桶聚合逻辑
-- 计算结果发布到数据总线
+**特征**：
+- 直接处理 `QuoteDepth`、`Transaction`、`Entrust` 等原始数据
+- 使用 `NmsBucketAggregator` 进行时间桶聚合
+- 计算结果通过 `DataBus` 发布
 
-**模板：**
-
-```cpp
-// my_basic_factor.h
-#pragma once
-#include "ifactor.h"
-#include "utils/databus.h"
-#include "utils/types.h"
-#include "utils/nms_bucket_aggregator.h"
-
-namespace factorlib {
-
-class MyBasicFactor : public BaseFactor {
-public:
-    explicit MyBasicFactor(const std::string& name, std::vector<std::string> codes)
-        : BaseFactor(name, std::move(codes)) {}
-    
-    // 实现数据处理接口
-    void on_quote(const QuoteDepth& q) override;
-    void on_transaction(const Transaction& t) override;
-    void on_entrust(const Entrust& e) override;
-    
-    bool force_flush(const std::string& code) override;
-    
-    // 注册数据总线主题（静态方法）
-    static void register_topics(size_t capacity = 120);
-    
-private:
-    // 因子内部状态
-    std::unordered_map<std::string, NmsBucketAggregator> _aggregators;
-    std::unordered_map<std::string, double> _last_prices;
-    
-    // 发布结果到数据总线
-    void publish_results(const std::string& code, int64_t timestamp, double value);
-    
-    // 因子计算逻辑
-    double calculate_factor(const BucketOutputs& output, const std::string& code);
-};
-
-} // namespace factorlib
-```
+**适用场景**：
+- 成交量相关因子
+- 价格动量因子
+- 订单簿分析因子
 
 #### B. 复杂因子 - 依赖其他因子的输出
 
-**特征：**
-- 消费其他因子在数据总线上发布的结果
-- 实现复杂的多因子组合或模型
-- 通过订阅机制获取输入数据
-- 可能涉及机器学习或统计模型
+**特征**：
+- 通过 `DataBus` 订阅其他因子的计算结果
+- 进行复杂的统计建模或机器学习
+- 可能需要等待多个输入因子的时间对齐
 
-**模板：**
-
-```cpp
-// my_complex_factor.h
-#pragma once
-#include "ifactor.h"
-#include "utils/databus.h"
-#include "utils/types.h"
-
-namespace factorlib {
-
-class MyComplexFactor : public BaseFactor {
-public:
-    explicit MyComplexFactor(std::vector<std::string> codes)
-        : BaseFactor("MyComplexFactor", std::move(codes)) {
-        setup_subscriptions();  // 构造函数中设置订阅
-    }
-    
-    // 复杂因子可能不需要处理所有原始数据
-    void on_quote(const QuoteDepth& q) override { /* 可选 */ }
-    void on_transaction(const Transaction& t) override { /* 可选 */ }
-    void on_entrust(const Entrust& e) override { /* 可选 */ }
-    
-    bool force_flush(const std::string& code) override;
-    
-    static void register_topics(size_t capacity = 120);
-    
-private:
-    void setup_subscriptions();
-    void on_dependency_update(const std::string& code, int64_t ts, const double& value);
-    
-    // 内部状态
-    std::unordered_map<std::string, std::deque<double>> _input_window;
-    std::unordered_map<std::string, double> _last_output;
-};
-
-} // namespace factorlib
-```
+**适用场景**：
+- 相关性分析因子
+- 风险模型因子
+- 机器学习预测因子
 
 ### 步骤2：实现因子逻辑
 
 #### 基础因子完整实现示例：
 
+**头文件** (`my_custom_factor.h`)：
 ```cpp
-// my_basic_factor.cpp
-#include "my_basic_factor.h"
-#include "utils/log.h"
-#include "utils/math_utils.h"
+#pragma once
+#include "ifactor.h"
+#include "utils/databus.h"
+#include "utils/nms_bucket_aggregator.h"
 
 namespace factorlib {
 
-// 定义数据总线主题（使用层级命名）
-static const char* TOPIC_MY_FACTOR = "custom/vwap_factor";
+struct MyCustomFactorConfig {
+    int64_t bucket_size_ms = 5000;  // 5秒时间桶
+    double threshold = 0.1;         // 自定义阈值
+};
 
-void MyBasicFactor::register_topics(size_t capacity) {
-    DataBus::instance().register_topic<double>(TOPIC_MY_FACTOR, capacity);
+class MyCustomFactor : public BaseFactor {
+public:
+    explicit MyCustomFactor(const MyCustomFactorConfig& cfg, 
+                           std::vector<std::string> codes);
+    
+    // 注册输出主题
+    static void register_topics(size_t capacity = 120);
+    
+    // 实现IFactor接口
+    void on_quote(const QuoteDepth& q) override;
+    void on_transaction(const Transaction& t) override;
+    void on_entrust(const Entrust& e) override;
+    bool force_flush(const std::string& code) override;
+
+private:
+    MyCustomFactorConfig _cfg;
+    std::unordered_map<std::string, NmsBucketAggregator> _aggregators;
+    
+    void ensure_code(const std::string& code);
+    void publish_results(const std::string& code, const BucketOutputs& out);
+};
+
+} // namespace factorlib
+```
+
+**实现文件** (`my_custom_factor.cpp`)：
+```cpp
+#include "my_custom_factor.h"
+
+namespace factorlib {
+
+// 主题定义
+static const char* TOP_MY_FACTOR = "custom/my_factor";
+
+MyCustomFactor::MyCustomFactor(const MyCustomFactorConfig& cfg, 
+                               std::vector<std::string> codes)
+    : BaseFactor("MyCustomFactor", std::move(codes)), _cfg(cfg) {}
+
+void MyCustomFactor::register_topics(size_t capacity) {
+    auto& bus = DataBus::instance();
+    bus.register_topic<double>(TOP_MY_FACTOR, capacity);
 }
 
-void MyBasicFactor::on_quote(const QuoteDepth& q) {
-    // 确保该代码的聚合器存在
-    if (_aggregators.find(q.instrument_id) == _aggregators.end()) {
-        _aggregators.emplace(q.instrument_id, NmsBucketAggregator(1000));
-    }
+void MyCustomFactor::on_quote(const QuoteDepth& q) {
+    ensure_code(q.instrument_id);
     
-    auto& agg = _aggregators[q.instrument_id];
-    
-    // 检查是否需要产出上一个时间桶
-    BucketOutputs output;
-    if (agg.flush_if_crossed(q.data_time_ms, output)) {
-        // 计算因子值并发布
-        double factor_value = calculate_factor(output, q.instrument_id);
-        publish_results(q.instrument_id, output.bucket_end_ms, factor_value);
+    // 检查时间桶边界
+    BucketOutputs out;
+    if (_aggregators[q.instrument_id].flush_if_crossed(q.data_time_ms, out)) {
+        publish_results(q.instrument_id, out);
     }
     
     // 处理当前行情
-    agg.on_quote(q);
+    _aggregators[q.instrument_id].on_quote(q);
     
-    // 更新最后价格（用于其他计算）
-    _last_prices[q.instrument_id] = (q.bid_price + q.ask_price) / 2.0;
-}
-
-void MyBasicFactor::on_transaction(const Transaction& t) {
-    auto it = _aggregators.find(t.instrument_id);
-    if (it != _aggregators.end()) {
-        it->second.on_transaction(t);
+    // 自定义计算逻辑
+    double spread = q.ask_price - q.bid_price;
+    if (spread > _cfg.threshold) {
+        // 执行特定逻辑
     }
 }
 
-void MyBasicFactor::on_entrust(const Entrust& e) {
-    auto it = _aggregators.find(e.instrument_id);
-    if (it != _aggregators.end()) {
-        it->second.on_entrust(e);
-    }
+void MyCustomFactor::on_transaction(const Transaction& t) {
+    ensure_code(t.instrument_id);
+    _aggregators[t.instrument_id].on_transaction(t);
 }
 
-bool MyBasicFactor::force_flush(const std::string& code) {
+void MyCustomFactor::on_entrust(const Entrust& e) {
+    ensure_code(e.instrument_id);
+    _aggregators[e.instrument_id].on_entrust(e);
+}
+
+bool MyCustomFactor::force_flush(const std::string& code) {
     auto it = _aggregators.find(code);
     if (it == _aggregators.end()) return false;
     
-    BucketOutputs output;
-    if (it->second.force_flush(output)) {
-        double factor_value = calculate_factor(output, code);
-        publish_results(code, output.bucket_end_ms, factor_value);
+    BucketOutputs out;
+    if (it->second.force_flush(out)) {
+        publish_results(code, out);
         return true;
     }
     return false;
 }
 
-void MyBasicFactor::publish_results(const std::string& code, int64_t timestamp, double value) {
-    DataBus::instance().publish<double>(TOPIC_MY_FACTOR, code, timestamp, value);
-    LOG_DEBUG("[{}] 发布 {} @ {}: {:.6f}", get_name(), code, timestamp, value);
+void MyCustomFactor::ensure_code(const std::string& code) {
+    if (_aggregators.find(code) == _aggregators.end()) {
+        _aggregators.emplace(code, NmsBucketAggregator(_cfg.bucket_size_ms));
+    }
 }
 
-double MyBasicFactor::calculate_factor(const BucketOutputs& output, const std::string& code) {
-    // 实现具体的因子计算逻辑
-    // 示例：成交量加权平均价格 (VWAP)
-    if (output.volume_sum == 0) return 0.0;
-    return output.amount_sum / output.volume_sum;
+void MyCustomFactor::publish_results(const std::string& code, const BucketOutputs& out) {
+    auto& bus = DataBus::instance();
+    
+    // 自定义因子计算
+    double factor_value = out.amount_sum / (out.volume_sum + 1e-6);
+    
+    bus.publish<double>(TOP_MY_FACTOR, code, out.bucket_end_ms, factor_value);
 }
 
 } // namespace factorlib
@@ -480,109 +577,70 @@ double MyBasicFactor::calculate_factor(const BucketOutputs& output, const std::s
 
 #### 复杂因子完整实现示例：
 
+**头文件** (`my_complex_factor.h`)：
 ```cpp
-// my_complex_factor.cpp
-#include "my_complex_factor.h"
-#include "utils/log.h"
-#include "utils/math_utils.h"
-#include <numeric>
+#pragma once
+#include "ifactor.h"
+#include "utils/databus.h"
+#include "utils/math/statistics.h"
 
 namespace factorlib {
 
-static const char* TOPIC_COMPLEX_RESULT = "complex/moving_average";
-static const char* TOPIC_DEPENDENCY = "custom/vwap_factor"; // 依赖的基础因子
-
-void MyComplexFactor::register_topics(size_t capacity) {
-    DataBus::instance().register_topic<double>(TOPIC_COMPLEX_RESULT, capacity);
-}
-
-void MyComplexFactor::setup_subscriptions() {
-    auto& bus = DataBus::instance();
+class MyComplexFactor : public BaseFactor {
+public:
+    explicit MyComplexFactor(std::vector<std::string> codes);
     
-    for (const auto& code : get_codes()) {
-        bus.subscribe<double>(TOPIC_DEPENDENCY, code,
-            [this](const std::string& code, int64_t ts, const double& value) {
-                this->on_dependency_update(code, ts, value);
-            });
-    }
-}
-
-void MyComplexFactor::on_dependency_update(const std::string& code, int64_t ts, const double& value) {
-    // 维护滑动窗口
-    auto& window = _input_window[code];
-    window.push_back(value);
+    static void register_topics(size_t capacity = 120);
     
-    // 保持窗口大小（示例：5个周期）
-    const size_t window_size = 5;
-    if (window.size() > window_size) {
-        window.pop_front();
-    }
+    // 复杂因子通常不直接处理原始数据
+    void on_quote(const QuoteDepth& q) override { /* 可选实现 */ }
+    void on_transaction(const Transaction& t) override { /* 可选实现 */ }
+    void on_entrust(const Entrust& e) override { /* 可选实现 */ }
+    bool force_flush(const std::string& code) override;
     
-    // 计算移动平均
-    if (window.size() == window_size) {
-        double sum = std::accumulate(window.begin(), window.end(), 0.0);
-        double moving_avg = sum / window_size;
-        
-        _last_output[code] = moving_avg;
-        DataBus::instance().publish<double>(TOPIC_COMPLEX_RESULT, code, ts, moving_avg);
-        
-        LOG_DEBUG("[{}] 计算 {} @ {}: 移动平均 = {:.6f}", 
-                 get_name(), code, ts, moving_avg);
-    }
-}
+    // 启动计算（通常在数据就绪后调用）
+    void start_computation();
 
-bool MyComplexFactor::force_flush(const std::string& code) {
-    // 复杂因子可能不需要特殊刷新逻辑，或者实现特定的刷新策略
-    auto it = _last_output.find(code);
-    if (it != _last_output.end()) {
-        int64_t current_time = /* 获取当前时间 */;
-        DataBus::instance().publish<double>(TOPIC_COMPLEX_RESULT, code, 
-                                           current_time, it->second);
-        LOG_INFO("[{}] 强制刷新 {}", get_name(), code);
-        return true;
-    }
-    return false;
-}
+private:
+    std::unordered_map<std::string, std::vector<double>> _input_data;
+    
+    void subscribe_inputs();
+    void on_input_updated(const std::string& code, int64_t ts, const double& value);
+    double compute_complex_value(const std::string& code);
+};
 
 } // namespace factorlib
 ```
 
 ### 步骤3：注册和使用新因子
 
-```cpp
-#include "factorlib/bridge/ingress.h"
-#include "my_basic_factor.h"
-#include "my_complex_factor.h"
-#include "utils/trading_time.h"
-
-void setup_complete_factor_system() {
-    // 1. 注册所有数据总线主题
-    TickTransOrders::register_topics(120);
-    MyBasicFactor::register_topics(120);
-    MyComplexFactor::register_topics(120);
-    
-    // 2. 创建因子配置
-    TickTransOrdersConfig tick_config{1000, true};
-    std::vector<std::string> monitor_codes = {"000001.SZ", "000002.SZ", "000003.SZ"};
-    
-    // 3. 创建因子实例
-    std::vector<std::shared_ptr<factorlib::IFactor>> factors;
-    
-    // 基础因子
-    factors.push_back(std::make_shared<TickTransOrders>(tick_config, monitor_codes));
-    factors.push_back(std::make_shared<MyBasicFactor>("MyVWAP", monitor_codes));
-    
-    // 复杂因子（依赖基础因子的输出）
-    factors.push_back(std::make_shared<MyComplexFactor>(monitor_codes));
-    
-    // 4. 注册到系统
-    factorlib::bridge::set_factors(factors);
-    
-    LOG_INFO("因子系统初始化完成，共注册 {} 个因子", factors.size());
-}
+**1. 在CMake中添加新因子**：
+```cmake
+# 在 factor_basic 库中添加新文件
+add_library(factor_basic
+    src/basic_factors/tick_trans_orders.cpp
+    src/gaussian_copula_factor.cpp
+    src/basic_factors/my_custom_factor.cpp  # 新增
+    src/complex_factors/my_complex_factor.cpp  # 新增
+)
 ```
 
-## 🔄 完整数据处理流程
+**2. 集成到应用程序**：
+```cpp
+// 注册主题
+factors_lib::MyCustomFactor::register_topics(100);
+factors_lib::MyComplexFactor::register_topics(80);
+
+// 创建因子实例
+factors_lib::MyCustomFactorConfig custom_cfg;
+custom_cfg.bucket_size_ms = 3000;
+auto custom_factor = factors_lib::MyCustomFactor(custom_cfg, {"000001.SZ"});
+
+// 使用因子
+custom_factor.on_quote(some_quote_data);
+```
+
+## 📊 完整数据处理流程
 
 ### 数据流架构图
 
@@ -604,13 +662,24 @@ void setup_complete_factor_system() {
 
 ### 时序处理机制
 
-框架通过严格的时间桶机制确保数据一致性：
-
-1. **原始数据流入**：高频的行情、成交、委托数据
-2. **时间桶划分**：按配置的时间窗口（如1000ms）划分数据
-3. **桶内聚合**：在每个时间桶内累计成交量、成交额，收集切片数据
-4. **桶结束触发**：当时间跨越桶边界时，自动产出该时间窗口的聚合结果
-5. **时间戳对齐**：所有因子使用相同的桶结束时间作为发布时间戳，确保时序一致
+**时间桶对齐策略**：
+```cpp
+// 确保所有因子使用相同的时间戳对齐
+void process_data_with_time_alignment() {
+    int64_t current_bucket_end = get_current_bucket_end();
+    
+    // 基础因子计算
+    base_factor.on_quote(quote);
+    
+    // 复杂因子等待基础因子输出
+    double base_output;
+    if (bus.wait_for_time_exact("base/topic", "000001.SZ", 
+                               current_bucket_end, base_output, 1000)) {
+        // 时间对齐成功，进行计算
+        complex_factor.compute(base_output);
+    }
+}
+```
 
 **时间对齐示例：**
 ```
@@ -624,227 +693,333 @@ void setup_complete_factor_system() {
 ## 🧪 测试策略
 
 ### 单元测试框架
-
 项目使用 GoogleTest 框架，提供中文输出的测试结果：
 
+**测试代码结构**：
 ```cpp
-// 为每个因子创建对应的测试文件
 #include <gtest/gtest.h>
-#include "my_basic_factor.h"
 #include "utils/data_gen.h"
 
-TEST(MyFactorTest, BasicCalculation) {
-    // 创建因子实例
-    MyBasicFactor factor("TestFactor", {"TEST001"});
+class TickTransOrdersTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        factors_lib::TickTransOrders::register_topics(50);
+        _factor = std::make_unique<factors_lib::TickTransOrders>(_cfg, {"TEST001"});
+    }
     
-    // 生成测试数据
-    auto test_series = factorlib::testutil::make_series_basic("TEST001", 
-        factorlib::testutil::hms_ms(9, 30, 0, 0), 1000);
+    factors_lib::TickTransOrdersConfig _cfg;
+    std::unique_ptr<factors_lib::TickTransOrders> _factor;
+};
+
+TEST_F(TickTransOrdersTest, BasicAggregation) {
+    // 使用测试数据生成器
+    auto series = factors_lib::testutil::make_series_basic("TEST001", 
+                                                          1704065400000, 1000);
     
-    // 执行测试
-    for (const auto& quote : test_series.quotes) {
-        factor.on_quote(quote);
+    // 处理测试数据
+    for (const auto& quote : series.quotes) {
+        _factor->on_quote(quote);
     }
     
     // 验证结果
-    // ...
+    double amount;
+    ASSERT_TRUE(DataBus::instance().get_latest<double>("zyd/amount", 
+                                                      "TEST001", amount));
+    EXPECT_NEAR(amount, 200000.0, 1e-6);
 }
 ```
 
 ### 测试数据生成工具
 
-使用 `data_gen.h` 中的工具生成可预期的测试数据：
-
+**`data_gen.h` 核心功能**：
 ```cpp
-#include "tests/utils/data_gen.h"
+namespace factorlib::testutil {
 
-TEST(MyFactorTest, WithGeneratedData) {
-    auto test_series = factorlib::testutil::make_series_basic("TEST001", 
-        factorlib::testutil::hms_ms(9, 30, 0, 0), 1000);
-    
-    // 使用生成的测试数据喂入因子
-    for (const auto& quote : test_series.quotes) {
-        factor.on_quote(quote);
-    }
-    
-    // 验证产出结果
+// 时间转换工具
+inline int64_t hms_ms(int H, int M, int S, int ms = 0) {
+    return ((H * 3600LL + M * 60LL + S) * 1000LL + ms);
 }
+
+// 构造可预期的测试序列
+Series make_series_basic(const std::string& code, int64_t start_ms, int64_t bucket_ms) {
+    Series s;
+    // 构造精确的行情、成交、委托序列
+    // 确保每个时间桶的累计值可预测
+    return s;
+}
+
+} // namespace
 ```
 
-## 📊 实际案例：高斯Copula因子
-
-项目包含一个完整的高斯Copula因子实现，展示了复杂统计模型的应用：
+## 📈 实际案例：高斯Copula因子
 
 ### 算法原理
 
-1. **特征提取**：订单流不平衡(OFI)和成交量作为输入特征
-2. **秩转换**：将原始数据转换为均匀分布的秩统计量
-3. **高斯转换**：使用逆正态CDF转换为多元正态分布
-4. **条件期望**：基于多元正态分布计算条件期望
-5. **逆转换**：将结果转换回原始收益率的尺度
+**高斯Copula条件期望**：
+1. **数据预处理**：将OFI、成交量、收益率转换为正态分数
+2. **协方差估计**：计算多变量高斯分布的协方差矩阵
+3. **条件期望**：给定OFI和成交量，预测收益率的条件期望
+4. **逆变换**：将正态分布结果转换回原始收益率尺度
+
+**数学公式**：
+```
+Z_return | Z_ofi, Z_volume ~ N(μ_cond, Σ_cond)
+其中：
+μ_cond = μ_return + Σ_{return,[ofi,volume]} · Σ_{[ofi,volume]}^{-1} · (Z_obs - μ_obs)
+```
 
 ### 实现亮点
 
+**增量计算优化**：
 ```cpp
-double GaussianCopulaFactor::compute_conditional_expectation(const std::string& code) {
-    // 1. 秩转换和正态分位数转换
-    std::vector<double> z_ofi(n), z_volume(n), z_return(n);
+void IncrementalState::update_data(double ofi, double volume, double ret) {
+    // 增量更新秩计算器
+    ofi_rank_calc.push(ofi, window_size);
+    volume_rank_calc.push(volume, window_size);
+    return_rank_calc.push(ret, window_size);
     
-    // 2. 计算协方差矩阵（带正则化）
-    Eigen::Matrix3d covariance = Eigen::Matrix3d::Zero();
-    
-    // 3. 分割协方差矩阵并计算条件均值
-    Eigen::Vector2d beta = sigma_11.ldlt().solve(sigma_12);
-    double conditional_mean = mean(2) + beta.dot(x_condition);
-    
-    // 4. 转换回均匀分布并应用经验逆CDF
-    double conditional_probability = 0.5 * (1.0 + std::erf(conditional_mean / std::sqrt(2.0)));
-    double predicted_return = empirical_inverse_cdf(state.return_window, conditional_probability);
-    
-    return predicted_return;
+    // 增量更新协方差
+    if (is_window_full()) {
+        double z_ofi = math::Distributions::normal_quantile(
+            ofi_rank_calc.median_rank(ofi));
+        double z_volume = math::Distributions::normal_quantile(
+            volume_rank_calc.median_rank(volume));
+        double z_return = math::Distributions::normal_quantile(
+            return_rank_calc.median_rank(ret));
+            
+        Eigen::Vector3d normal_score(z_ofi, z_volume, z_return);
+        cov_calc.push(normal_score);
+    }
 }
 ```
 
-## 🔧 最佳实践和性能优化
+**性能优势**：
+- **时间复杂度**：O(log n) 的滑动窗口更新
+- **内存效率**：只维护必要的统计量，不存储完整窗口
+- **数值稳定性**：正则化协方差矩阵避免奇异性
+
+## ⚡ 最佳实践和性能优化
 
 ### 命名规范
 
-- **因子类名**：使用驼峰命名，如 `VolumeWeightedAveragePrice`
-- **数据总线主题**：使用层级命名，如 `namespace/factor_name`
-- **配置文件**：使用嵌套结构，明确参数含义
-- **日志标识**：在日志中明确标识因子名称和股票代码
+**主题命名约定**：
+```
+{作者或团队}/{因子类型}/{具体指标}
+示例：
+zyd/amount           # 成交额
+zyd/tick/trans       # Tick成交切片  
+gaussian_copula/prediction  # 高斯Copula预测值
+```
+
+**代码命名**：
+- 类名：`PascalCase`，如 `TickTransOrders`
+- 变量名：`snake_case`，如 `bucket_size_ms`
+- 常量：`UPPER_SNAKE_CASE`，如 `TOP_AMOUNT`
 
 ### 错误处理
 
+**防御性编程**：
 ```cpp
-void MyFactor::on_quote(const QuoteDepth& q) {
+void ensure_code(const std::string& code) {
+    if (_aggregators.find(code) == _aggregators.end()) {
+        // 延迟初始化
+        _aggregators.emplace(code, NmsBucketAggregator(_cfg.bucket_size_ms));
+        LOG_DEBUG("初始化代码 {} 的聚合器", code);
+    }
+}
+
+bool safe_publish(const std::string& topic, const std::string& code, 
+                  int64_t ts, const T& value) {
     try {
-        // 因子核心逻辑
-        process_quote_data(q);
+        DataBus::instance().publish(topic, code, ts, value);
+        return true;
     } catch (const std::exception& e) {
-        LOG_ERROR("[{}] 处理 {} 行情数据时出错: {}", 
-                 get_name(), q.instrument_id, e.what());
-        // 可以考虑重置状态或采取其他恢复措施
+        LOG_ERROR("发布数据失败: {} - {}", topic, e.what());
+        return false;
     }
 }
 ```
 
 ### 性能考虑
 
-1. **避免数据拷贝**：在数据总线中传递 const 引用
-2. **合理设置容量**：根据内存和使用场景设置数据总线的环形缓冲区容量
-3. **及时清理状态**：在 `force_flush` 中清理不必要的状态
-4. **预分配内存**：对于频繁使用的数据结构，考虑预分配策略
+**内存管理**：
+- 使用 `std::deque` 作为环形缓冲区，自动淘汰旧数据
+- 合理设置 `capacity` 参数，平衡内存和历史深度需求
+- 对于大窗口因子，考虑使用增量计算避免存储完整数据
 
-### 内存管理
-
+**计算优化**：
 ```cpp
-class OptimizedFactor : public BaseFactor {
-private:
-    // 使用预分配的内存池避免频繁分配
-    std::unordered_map<std::string, std::vector<double>> _preallocated_buffers;
-    
-    void preallocate_buffers() {
-        for (const auto& code : get_codes()) {
-            _preallocated_buffers[code].reserve(1000); // 预分配容量
-        }
+// 好的实践：使用引用避免拷贝
+void process_large_data(const std::vector<QuoteDepth>& quotes) {
+    for (const auto& quote : quotes) {  // 使用const引用
+        factor.on_quote(quote);
     }
-};
-```
+}
 
-## 🐛 故障排除和调试
-
-### 常见问题
-
-1. **数据总线主题未注册**
-   ```cpp
-   // 错误：在创建因子前忘记注册主题
-   // 正确：在main函数或初始化时先注册主题
-   MyFactor::register_topics(120);
-   auto factor = std::make_shared<MyFactor>(...);
-   ```
-
-2. **时间戳不对齐**
-   - 确保所有因子使用相同的桶结束时间作为发布时间戳
-   - 检查时间桶配置是否一致
-
-3. **内存泄漏**
-   - 使用智能指针管理因子生命周期
-   - 定期检查环形缓冲区容量
-
-4. **性能问题**
-   - 检查数据总线容量设置
-   - 分析因子计算复杂度
-   - 使用性能分析工具定位瓶颈
-
-### 调试技巧
-
-```cpp
-// 启用详细日志
-#define USE_SPDLOG
-#include "utils/log.h"
-
-// 在因子中添加调试输出
-void MyFactor::on_quote(const QuoteDepth& q) {
-    LOG_TRACE("[{}] 处理 {} @ {}", get_name(), q.instrument_id, q.data_time_ms);
-    // ... 因子逻辑
+// 避免在热路径中分配内存
+void on_quote(const QuoteDepth& q) override {
+    // 预分配数据结构
+    thread_local BucketOutputs out;
+    
+    if (_aggregator.flush_if_crossed(q.data_time_ms, out)) {
+        publish_results(out);
+        out = BucketOutputs{};  // 重置而不是重新分配
+    }
 }
 ```
 
-## 🔮 扩展指南
+### 内存管理
+
+**智能指针使用**：
+```cpp
+class FactorManager {
+private:
+    std::vector<std::unique_ptr<IFactor>> _factors;
+    
+public:
+    void add_factor(std::unique_ptr<IFactor> factor) {
+        _factors.push_back(std::move(factor));
+    }
+    
+    // 自动内存管理，无需手动delete
+};
+```
+
+## 🔍 故障排除和调试
+
+### 常见问题
+
+**1. 数据总线主题未注册**：
+```
+错误：尝试访问未注册的主题 'unknown/topic'
+解决：在因子构造函数中调用 register_topics()
+```
+
+**2. 时间桶未对齐**：
+```
+现象：复杂因子读取不到基础因子的输出
+解决：确保使用相同的时间戳（桶结束时间）发布和订阅
+```
+
+**3. 内存泄漏**：
+```
+检测：使用Valgrind或AddressSanitizer
+预防：合理设置DataBus的capacity参数
+```
+
+### 调试技巧
+
+**日志分级**：
+```cpp
+// 在开发阶段使用详细日志
+logger->set_level(spdlog::level::debug);
+
+// 关键路径添加跟踪日志
+LOG_TRACE("开始处理代码 {} 的行情数据", code);
+factor.on_quote(quote);
+LOG_TRACE("完成处理，当前时间桶: {}", current_bucket);
+```
+
+**数据验证**：
+```cpp
+void validate_quote(const QuoteDepth& q) {
+    if (q.bid_price <= 0 || q.ask_price <= 0) {
+        LOG_WARN("异常价格数据: bid={}, ask={}", q.bid_price, q.ask_price);
+    }
+    
+    if (q.data_time_ms == 0) {
+        LOG_ERROR("无效时间戳: {}", q.instrument_id);
+        throw std::invalid_argument("时间戳不能为0");
+    }
+}
+```
+
+## 🔌 扩展指南
 
 ### 添加新的数据源
 
-1. 在 `DataAdapter` 中添加新的转换函数
-2. 在 `ingress.h` 中添加新的数据摄入接口
-3. 更新桥接层实现
-
-### 自定义聚合逻辑
-
-继承 `NmsBucketAggregator` 实现自定义时间桶策略：
-
+**实现新的DataAdapter**：
 ```cpp
-class CustomAggregator : public NmsBucketAggregator {
+class MyExchangeDataAdapter {
 public:
-    explicit CustomAggregator(int64_t bucket_ms) : NmsBucketAggregator(bucket_ms) {}
-    
-    void on_quote(const QuoteDepth& q) override {
-        // 自定义聚合逻辑
-        // ...
-        
-        // 调用基类实现（可选）
-        NmsBucketAggregator::on_quote(q);
+    static QuoteDepth from_my_exchange_format(const MyExchangeSnapshot& snapshot) {
+        QuoteDepth q;
+        q.instrument_id = snapshot.symbol;
+        q.data_time_ms = snapshot.timestamp;
+        q.bid_price = snapshot.best_bid;
+        q.ask_price = snapshot.best_ask;
+        q.volume = snapshot.volume;
+        q.turnover = snapshot.turnover;
+        return q;
     }
 };
 ```
 
-## 📞 支持和贡献
+### 自定义聚合逻辑
+
+**扩展NmsBucketAggregator**：
+```cpp
+class MyCustomAggregator : public NmsBucketAggregator {
+public:
+    using NmsBucketAggregator::NmsBucketAggregator;
+    
+    void on_quote(const QuoteDepth& q) override {
+        // 先调用基类实现
+        NmsBucketAggregator::on_quote(q);
+        
+        // 添加自定义聚合逻辑
+        _custom_metric += calculate_custom_value(q);
+    }
+    
+private:
+    double _custom_metric = 0.0;
+};
+```
+
+## 🤝 支持和贡献
 
 ### 获取帮助
 
-- 查看 `docs/` 目录下的详细文档
-- 参考现有因子实现作为模板
-- 运行测试用例理解框架行为
+- **问题报告**：在GitHub Issues中描述遇到的问题
+- **功能请求**：通过Issue模板提交新功能建议
+- **技术讨论**：参与项目的Discussions板块
 
 ### 贡献指南
 
-1. 为每个新因子创建对应的测试用例
-2. 遵循现有的代码风格和命名规范
-3. 更新相关文档
-4. 确保所有测试通过
+**代码提交流程**：
+1. Fork项目仓库
+2. 创建功能分支：`git checkout -b feature/amazing-feature`
+3. 提交更改：`git commit -m 'Add amazing feature'`
+4. 推送到分支：`git push origin feature/amazing-feature`
+5. 创建Pull Request
+
+**代码质量要求**：
+- 通过所有现有测试
+- 添加新功能的单元测试
+- 更新相关文档
+- 遵循项目的代码风格
 
 ### 许可证
 
-[在此添加项目许可证信息]
+本项目采用 **MIT 许可证**。详细信息请查看项目根目录中的 `LICENSE` 文件。
+
+## 🏆 架构优势总结
+
+1. **高性能**：增量计算和内存优化设计
+2. **可扩展**：模块化架构支持快速添加新因子
+3. **类型安全**：编译期检查确保数据一致性
+4. **时间对齐**：精确的时间桶聚合机制
+5. **松耦合**：数据总线实现因子间解耦
+6. **生产就绪**：完整的错误处理和日志系统
 
 ---
 
-## 🎯 架构优势总结
+**开始使用FactorLib**：
+```bash
+git clone https://github.com/your-username/factorlib.git
+cd factorlib
+mkdir build && cd build
+cmake .. && make -j4
+./tests/run_tests
+```
 
-经过模块化重构后的 FactorLib 具有以下优势：
-
-1. **清晰的职责分离**：每个组件都有明确的单一职责
-2. **更好的编译时依赖**：只包含实际需要的头文件
-3. **更高的可测试性**：可以独立测试各个工具组件
-4. **更易维护**：相关功能集中管理，便于理解和修改
-5. **更好的扩展性**：新增功能时可以放在合适的模块中
