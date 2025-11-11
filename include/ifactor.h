@@ -2,6 +2,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <unordered_set>
 #include "utils/types.h"
 
 namespace factorlib {
@@ -39,7 +40,8 @@ namespace factorlib {
     protected:
         std::vector<std::string> _codes;
         std::string _name;
-
+        // 记录已初始化过的 code，避免重复初始化
+        std::unordered_set<std::string> _known_codes;
     public:
         BaseFactor(const std::string& name, std::vector<std::string> codes)
             : _name(name), _codes(std::move(codes)) {}
@@ -48,9 +50,24 @@ namespace factorlib {
         const std::vector<std::string>& get_codes() const override { return _codes; }
 
     protected:
+        /**
+         * @brief 确保某个 code 的内部状态已初始化（只在首次见到该 code 时触发）
+         * 典型用途：
+         *  - 为该 code 创建窗口/缓存/统计器
+         *  - 注册 DataBus topic 的订阅/发布钩子
+         *  - 建立跨模块的索引（如 code->state 映射）
+         */
         void ensure_code(const std::string& code) {
-            // 通用代码确保逻辑
+            if (_known_codes.find(code) != _known_codes.end()) return;
+            _known_codes.insert(code);
+            on_code_added(code);
         }
+
+        /**
+         * @brief 派生类可覆盖此钩子，完成 code 级别的自定义初始化
+         * 缺省实现为空。
+         */
+        virtual void on_code_added(const std::string& /*code*/) {}
     };
 
 } // namespace factorlib

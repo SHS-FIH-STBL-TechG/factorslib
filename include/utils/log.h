@@ -1,10 +1,20 @@
-// include/utils/log.h (优化版本)
+// include/utils/log.h (优化版本，支持编译期裁剪 TRACE/DEBUG)
 #pragma once
 /**
  * Simple logging facade for factorlib.
  * If USE_SPDLOG is defined and headers are available, map to spdlog.
  * Otherwise fall back to fprintf(stderr, ...).
  */
+
+// ---- Windows 头文件宏控制（需在包含任何可能引入 windows.h 的头之前定义）----
+#if defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#endif
 
 #ifdef USE_SPDLOG
   #include <spdlog/spdlog.h>
@@ -15,9 +25,15 @@
 
 namespace factorlib {
 namespace log {
-
-// 定义日志级别
-enum class LogLevel {
+  // 定义日志级别
+// 注意：windows.h 会定义 ERROR/WARN 等宏，需先取消定义以避免与枚举成员冲突
+#if defined(_WIN32) && defined(ERROR)
+#  undef ERROR
+#endif
+#if defined(_WIN32) && defined(WARN)
+#  undef WARN
+#endif
+  enum class LogLevel {
     TRACE = 0,
     DEBUG = 1,
     INFO = 2,
@@ -26,46 +42,56 @@ enum class LogLevel {
     OFF = 5
 };
 
-// 获取当前日志级别
-inline LogLevel get_log_level() {
-#ifdef NDEBUG
+  // 获取当前日志级别
+  inline LogLevel get_log_level() {
+#if defined(FACTORLIB_NO_DEBUG_TRACE)
+    // 编译期裁掉 TRACE/DEBUG 时，运行时级别固定为 INFO
+    return LogLevel::INFO;
+#elif defined(NDEBUG)
     // Release模式默认级别
     return LogLevel::INFO;
 #else
     // Debug模式默认级别
     return LogLevel::DEBUG;
 #endif
-}
+  }
 
-// initialize logging once per process (no-op for fallback)
-inline void init_logging_once() {
+  // initialize logging once per process (no-op for fallback)
+  inline void init_logging_once() {
 #ifdef USE_SPDLOG
     static bool inited = false;
     if(!inited){
-        // use colored console sink
-        auto logger = spdlog::stdout_color_mt("factorlib");
-        spdlog::set_default_logger(logger);
+      // use colored console sink
+      auto logger = spdlog::stdout_color_mt("factorlib");
+      spdlog::set_default_logger(logger);
 
-        // 根据编译模式设置日志级别
-        #ifdef NDEBUG
-        spdlog::set_level(spdlog::level::info);  // Release模式
-        #else
-        spdlog::set_level(spdlog::level::debug); // Debug模式
-        #endif
+      // 根据编译/裁剪宏设置日志级别
+#if defined(FACTORLIB_NO_DEBUG_TRACE)
+      // 当编译期裁掉 TRACE/DEBUG 时，强制 INFO 级别
+      spdlog::set_level(spdlog::level::info);
+#elif defined(NDEBUG)
+      spdlog::set_level(spdlog::level::info);  // Release模式
+#else
+      spdlog::set_level(spdlog::level::debug); // Debug模式
+#endif
 
-        spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
-        inited = true;
+      spdlog::set_pattern("[%H:%M:%S.%e] [%^%l%$] %v");
+      inited = true;
     }
 #endif
-}
+  }
 
 } // namespace log
 } // namespace factorlib
 
 // 条件编译的日志宏
 #ifdef USE_SPDLOG
-  #ifdef NDEBUG
-    // Release模式：移除TRACE和DEBUG日志
+  #if defined(FACTORLIB_NO_DEBUG_TRACE)
+    // 编译期裁剪：移除 TRACE/DEBUG 宏（无论 Debug/Release）
+    #define LOG_TRACE(...)
+    #define LOG_DEBUG(...)
+  #elif defined(NDEBUG)
+    // Release模式：移除 TRACE/DEBUG 日志
     #define LOG_TRACE(...)
     #define LOG_DEBUG(...)
   #else
