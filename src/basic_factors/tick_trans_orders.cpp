@@ -1,6 +1,7 @@
 // src/basic_factors/tick_trans_orders.cpp
 #include "basic_factors/tick_trans_orders.h"
 #include "utils/log.h"
+#include "utils/databus.h"  // for safe_publish
 
 /**
  * @file tick_trans_orders.cpp
@@ -50,11 +51,11 @@ namespace factorlib {
         auto& bus = DataBus::instance();
         // 使用桶的结束时间作为时间戳
         const int64_t ts = out.bucket_end_ms;
-        bus.publish<double>(TOP_AMOUNT, code, ts, out.amount_sum);
-        bus.publish<int64_t>(TOP_VOLUME, code, ts, out.volume_sum);
-        bus.publish<double>(TOP_MID, code, ts, out.midprice_last);
-        bus.publish<std::vector<Transaction>>(TOP_TTRANS, code, ts, out.trans);
-        bus.publish<std::vector<Entrust>>(TOP_TORD, code, ts, out.orders);
+        safe_publish<double>(TOP_AMOUNT, code, ts, out.amount_sum);
+        safe_publish<int64_t>(TOP_VOLUME, code, ts, out.volume_sum);
+        safe_publish<double>(TOP_MID, code, ts, out.midprice_last);
+        safe_publish<std::vector<Transaction>>(TOP_TTRANS, code, ts, out.trans);
+        safe_publish<std::vector<Entrust>>(TOP_TORD, code, ts, out.orders);
     }
 
     void TickTransOrders::maybe_flush_and_publish(const std::string& code, int64_t now_ms) {
@@ -79,8 +80,8 @@ namespace factorlib {
         if (lt > 0) {
             auto &vt = _interval_trans_pending[q.instrument_id];
             auto &vo = _interval_orders_pending[q.instrument_id];
-            DataBus::instance().publish<std::vector<Transaction>>(TOP_IVTRANS, q.instrument_id, q.data_time_ms, vt);
-            DataBus::instance().publish<std::vector<Entrust>>(TOP_IVORD, q.instrument_id, q.data_time_ms, vo);
+            safe_publish<std::vector<Transaction>>(TOP_IVTRANS, q.instrument_id, q.data_time_ms, vt);
+            safe_publish<std::vector<Entrust>>(TOP_IVORD, q.instrument_id, q.data_time_ms, vo);
             vt.clear();
             vo.clear();
         }

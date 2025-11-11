@@ -9,6 +9,7 @@
 #include "utils/math/linear_algebra.h"
 #include "utils/trading_time.h"
 #include "utils/log.h"  // 添加日志
+#include "utils/databus.h"  // for safe_publish
 
 namespace factorlib {
 
@@ -233,7 +234,7 @@ double GaussianCopulaFactor::compute_conditional_expectation(const std::string& 
 
 void GaussianCopulaFactor::publish_prediction(const std::string& code, double prediction, int64_t timestamp) {
     auto& bus = DataBus::instance();
-    bus.publish<double>(TOP_PREDICTION, code, timestamp, prediction);
+    safe_publish<double>(TOP_PREDICTION, code, timestamp, prediction);
 }
 
 } // namespace factorlib
