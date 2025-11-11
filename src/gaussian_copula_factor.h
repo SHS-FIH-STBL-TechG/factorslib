@@ -6,7 +6,10 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
-#include "utils/types.h"        // 替换 utils/utils.h
+#include <unordered_map>
+
+#include "ifactor.h"                 // ★ 新增：继承 BaseFactor/IFactor
+#include "utils/types.h"
 #include "utils/databus.h"
 #include "utils/log.h"
 #include "utils/math/incremental_rank.h"
@@ -14,6 +17,8 @@
 /**
  * @file gaussian_copula_factor.h
  * @brief 高斯 Copula 条件期望因子（增量计算优化版）
+ *
+ * ★ 本版仅做“继承 BaseFactor”的集成性改造，不改你的计算/窗口/发布语义。
  */
 
 namespace factorlib {
@@ -28,36 +33,44 @@ struct GaussianCopulaConfig {
 /**
  * @brief 高斯 Copula 条件期望因子（增量计算优化版）
  *
- * 使用增量秩计算器和增量协方差计算器，实现 O(log n) 时间复杂度的滑动窗口计算
+ * 使用增量秩计算器和增量协方差计算器，实现 O(log n) 的滑动窗口计算
+ * ★ 改造点：继承 BaseFactor，使其可被 bridge::ingest_* 统一驱动
  */
-class GaussianCopulaFactor {
+class GaussianCopulaFactor : public BaseFactor {
 public:
+    /**
+     * @brief 构造函数
+     * @param cfg   配置
+     * @param codes 关注代码（委托给 BaseFactor 管理）
+     *
+     * ★ 行为不变：仍然使用秩/协方差窗口；仅在窗口满足时发布
+     */
     explicit GaussianCopulaFactor(const GaussianCopulaConfig& cfg, std::vector<std::string> codes);
 
-    /// 注册因子输出主题
+    /// 注册因子输出主题（主题名与 demo 对齐）
     static void register_topics(size_t capacity = 120);
 
-    /// 处理行情数据（用于计算收益率）
-    void on_quote(const QuoteDepth& q);
+    // ===== IFactor 接口：由 bridge 驱动 =====
+    void on_quote(const QuoteDepth& q) override;          ///< 行情：用于计算对数收益
+    void on_entrust(const Entrust& e) override;           ///< 委托：累计 OFI/Volume
+    void on_transaction(const Transaction& t) override;   ///< 成交：可选（原逻辑未使用）
+    void on_bar(const Bar& /*b*/) override {}             ///< 当前未用
+    bool force_flush(const std::string& code) override;   ///< 仅窗口满时返回 true 并发布
 
-    /// 处理委托数据（用于计算OFI）
-    void on_entrust(const Entrust& e);
+    // ===== 为兼容旧调用，保留同名方法（委托给 BaseFactor）=====
+    std::string get_name() const { return BaseFactor::get_name(); }
+    const std::vector<std::string>& get_codes() const { return BaseFactor::get_codes(); }
 
-    /// 处理成交数据（可选，用于验证）
-    void on_transaction(const Transaction& t);
-
-    /// 强制刷新当前计算
-    bool force_flush(const std::string& code);
-
-    /// 获取因子名称
-    std::string get_name() const { return "GaussianCopulaFactor"; }
-
-    /// 获取监控的股票代码列表
-    const std::vector<std::string>& get_codes() const { return _codes; }
+protected:
+    /**
+     * @brief BaseFactor 钩子：首次遇到某代码时调用
+     * ★ 这里不做初始化（避免与 ensure_code 重复初始化），保持原行为：
+     *    各回调一律先调用 ensure_code(code) 完成初始化。
+     */
+    void on_code_added(const std::string& /*code*/) override {}
 
 private:
     GaussianCopulaConfig _cfg;
-    std::vector<std::string> _codes;
 
     // 每个代码的原始状态
     struct CodeState {
@@ -69,7 +82,6 @@ private:
         double current_volume = 0.0;        ///< 当前tick累计成交量
         bool has_initial_price = false;     ///< 是否有初始价格
     };
-
     std::unordered_map<std::string, CodeState> _states;
 
     // 增量计算状态
@@ -82,22 +94,23 @@ private:
 
         explicit IncrementalState(size_t window_size);
 
+        /// 新增数据点并维护秩与协方差；当三个秩都达到窗口大小时才推进协方差
         void update_data(double ofi, double volume, double ret);
+        /// 窗口是否已满：三个秩与协方差都达到窗口大小
         bool is_window_full() const;
     };
-
     std::unordered_map<std::string, std::unique_ptr<IncrementalState>> _incremental_states;
 
-    /// 确保代码状态存在
+    /// 确保该代码状态存在（★ 与原版一致，只是内部不再自管 _codes）
     void ensure_code(const std::string& code);
 
-    /// 增量计算条件期望
+    /// 增量计算条件期望（★ 不改你的算法）
     double compute_conditional_expectation_incremental(const std::string& code);
 
     /// 全量计算条件期望（保留用于兼容性）
     double compute_conditional_expectation(const std::string& code);
-    
-    /// 发布因子值
+
+    /// 发布因子值（主题固定）
     void publish_prediction(const std::string& code, double prediction, int64_t timestamp);
 };
 

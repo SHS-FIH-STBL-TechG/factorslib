@@ -14,7 +14,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(FACTORLIB_BUILD_TESTS "Build tests" ON)
 option(FACTORLIB_USE_THIRD_PARTY "Prefer bundled third_party libs" ON)
 option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
-
+option(FACTORLIB_WITH_DEMO_E2E "Build E2E test depending on demo_header" OFF)
+option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests (non-E2E)" ON)
 # ========================
 # 编译选项
 # ========================
@@ -50,7 +51,7 @@ endif()
 include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/../demo_header  # 添加 demo_header 路径
+#        ${CMAKE_CURRENT_SOURCE_DIR}/../demo_header  # 添加 demo_header 路径
 )
 
 # ---------- 组件：工具库（日志 + 通用工具） ----------
@@ -100,7 +101,7 @@ else()
 endif()
 
 # ---------- 测试 ----------
-if (FACTORLIB_BUILD_TESTS)
+if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     enable_testing()
     set(FACTORLIB_TEST_SOURCES
         tests/tick_trans_orders_test.cpp
@@ -108,8 +109,6 @@ if (FACTORLIB_BUILD_TESTS)
         tests/factor_compute_test.cpp
         tests/gaussian_copula_factor_test.cpp
         tests/gtest_printer_zh.h
-        tests/integration/demo_min_e2e_test.cpp
-        src/utils/nms_bucket_aggregator.cpp
     )
     add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
     target_link_libraries(run_tests PRIVATE factor_basic factorlib_utils gtest gtest_main )
@@ -134,4 +133,38 @@ if (FACTORLIB_BUILD_TESTS)
     # 为测试添加 demo_header 路径
     target_include_directories(run_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../demo_header )
     add_test(NAME run_all COMMAND run_tests)
+endif()
+
+if (FACTORLIB_WITH_DEMO_E2E)
+    enable_testing()
+
+    add_executable(run_e2e tests/integration/demo_min_e2e_test.cpp)
+    target_link_libraries(run_e2e PRIVATE factor_basic factorlib_utils gtest gtest_main)
+    if (NOT MSVC)
+        find_package(Threads REQUIRED)
+        target_link_libraries(run_e2e PRIVATE Threads::Threads)
+    endif()
+
+    # 优先用顶层提供的 INTERFACE 目标；没有就退回相对路径
+    if (TARGET demo_headers)
+        target_link_libraries(run_e2e PRIVATE demo_headers)
+    else()
+        target_include_directories(run_e2e PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../demo_header)
+    endif()
+
+    # spdlog 宏同步
+    if (EXISTS "${SPDLOG_INCLUDE_DIR}/spdlog/spdlog.h")
+        target_include_directories(run_e2e PRIVATE ${SPDLOG_INCLUDE_DIR})
+        if (FACTORLIB_ENABLE_TRACE_DEBUG)
+            target_compile_definitions(run_e2e PRIVATE USE_SPDLOG=1 SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG)
+        else()
+            target_compile_definitions(run_e2e PRIVATE USE_SPDLOG=1 SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO FACTORLIB_NO_DEBUG_TRACE=1)
+        endif()
+    else()
+        if (NOT FACTORLIB_ENABLE_TRACE_DEBUG)
+            target_compile_definitions(run_e2e PRIVATE FACTORLIB_NO_DEBUG_TRACE=1)
+        endif()
+    endif()
+
+    add_test(NAME run_e2e COMMAND run_e2e)
 endif()
