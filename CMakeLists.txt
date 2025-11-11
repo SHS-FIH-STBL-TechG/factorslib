@@ -108,6 +108,7 @@ if (FACTORLIB_BUILD_TESTS)
         tests/factor_compute_test.cpp
         tests/gaussian_copula_factor_test.cpp
         tests/gtest_printer_zh.h
+        tests/integration/demo_min_e2e_test.cpp
         src/utils/nms_bucket_aggregator.cpp
     )
     add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
