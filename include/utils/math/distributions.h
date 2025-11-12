@@ -7,6 +7,13 @@
 #include <type_traits>
 #include <iterator>
 
+#if __has_include(<boost/math/distributions/fisher_f.hpp>)
+  #include <boost/math/distributions/fisher_f.hpp>
+  #define FACTORLIB_HAS_BOOST_MATH 1
+#else
+  #define FACTORLIB_HAS_BOOST_MATH 0
+#endif
+
 namespace factorlib {
 namespace math {
 
@@ -93,6 +100,48 @@ public:
         }
     }
 };
+
+    /**
+     * @brief F 分布右尾概率（Survival Function）：Pr(F_{d1,d2} >= Fobs)
+     *        - 模板化以支持 float/double/long double
+     *        - 优先使用 Boost.Math（header-only），无 Boost 时保守返回 1
+     *
+     * @tparam TFloat 浮点类型（float/double/long double）
+     * @param Fobs    观察到的 F 值（>=0）
+     * @param d1      自由度1（通常是受限与非受限的参数差 q）
+     * @param d2      自由度2（通常是非受限模型的残差自由度 N - p - q - 1）
+     * @return 右尾概率 p ∈ [0,1]；无 Boost 时返回 1（表示“不显著”）
+     */
+    template<typename TFloat>
+    inline TFloat fisher_f_sf(TFloat Fobs, int d1, int d2) {
+        static_assert(std::is_floating_point_v<TFloat>, "TFloat must be floating point");
+#if FACTORLIB_HAS_BOOST_MATH
+        if (!(Fobs >= (TFloat)0) || d1 <= 0 || d2 <= 0) return (TFloat)1;
+        try {
+            boost::math::fisher_f dist(d1, d2);
+            // 右尾概率 = cdf_complement(Fobs)
+            TFloat p = boost::math::cdf(boost::math::complement(dist, Fobs));
+            if (p < (TFloat)0) p = (TFloat)0;
+            if (p > (TFloat)1) p = (TFloat)1;
+            return p;
+        } catch (...) {
+            // 任何异常（数值/参数）时返回保守值
+            return (TFloat)1;
+        }
+#else
+        // 无 Boost：保守退化，返回 1（不显著）
+        (void)Fobs; (void)d1; (void)d2;
+        return (TFloat)1;
+#endif
+    }
+
+    /**
+     * @brief 便捷别名：与 fisher_f_sf 相同（可读性更强）
+     */
+    template<typename TFloat>
+    inline TFloat fisher_f_pvalue_right_tail(TFloat Fobs, int d1, int d2) {
+        return fisher_f_sf<TFloat>(Fobs, d1, d2);
+    }
 
 } // namespace math
 } // namespace factorlib

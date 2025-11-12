@@ -54,6 +54,23 @@ include_directories(
 #        ${CMAKE_CURRENT_SOURCE_DIR}/../demo_header  # 添加 demo_header 路径
 )
 
+# ====== Boost（使用 bcp 导出的最小头，避免 FindBoost / CMP0167） ======
+set(BOOST_VENDOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/boost)
+if (EXISTS "${BOOST_VENDOR_DIR}/boost/config.hpp")
+    message(STATUS "Using bundled Boost headers (bcp): ${BOOST_VENDOR_DIR}")
+else()
+    message(FATAL_ERROR "Bundled Boost headers not found at ${BOOST_VENDOR_DIR}.
+    请先用 bcp 导出到 factors_lib/third_party/boost，再重新配置。")
+endif()
+
+# 统一把 Boost vendor include 加到各目标
+set(FACTORLIB_THIRDPARTY_INCLUDES
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${BOOST_VENDOR_DIR}
+        ${EIGEN3_INCLUDE_DIR}
+)
+
+
 # ---------- 组件：工具库（日志 + 通用工具） ----------
 add_library(factorlib_utils
         src/utils/log.cpp
@@ -62,14 +79,19 @@ add_library(factorlib_utils
         src/utils/trading_time.cpp
         src/utils/nms_bucket_aggregator.cpp
         include/utils/math/incremental_rank.h
+        include/utils/config/feed_mode.h
+        include/utils/math/sliding_normal_eq.h
         # 注意：移除了 math_utils.cpp
 )
-target_include_directories(factorlib_utils PUBLIC include)
+target_include_directories(factorlib_utils PUBLIC ${FACTORLIB_THIRDPARTY_INCLUDES})
 
 # ---------- 组件：基础因子库（现有因子 + 新因子） ----------
 add_library(factor_basic
         src/basic_factors/tick_trans_orders.cpp
         src/gaussian_copula_factor.cpp  # 添加高斯 Copula 因子
+        src/granger_causality_factor.cpp
+        src/granger_causality_factor.h
+        src/granger_causality_factor.cpp
 )
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC include)
@@ -108,7 +130,7 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
         tests/test_wait.cpp
         tests/factor_compute_test.cpp
         tests/gaussian_copula_factor_test.cpp
-        tests/gtest_printer_zh.h
+        tests/granger_causality_factor_test.cpp
     )
     add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
     target_link_libraries(run_tests PRIVATE factor_basic factorlib_utils gtest gtest_main )
