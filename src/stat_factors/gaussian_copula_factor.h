@@ -52,8 +52,9 @@ public:
 
     // ===== IFactor 接口：由 bridge 驱动 =====
     void on_quote(const QuoteDepth& q) override;          ///< 行情：用于计算对数收益
-    void on_entrust(const Entrust& e) override;           ///< 委托：累计 OFI/Volume
-    void on_transaction(const Transaction& t) override;   ///< 成交：可选（原逻辑未使用）
+    // void on_entrust(const Entrust& e) override;           ///< 委托：累计 OFI/Volume
+    // void on_transaction(const Transaction& t) override;   ///< 成交：可选（原逻辑未使用）
+    void on_tick (const CombinedTick& x) override;   // 统一逐笔入口
     void on_bar(const Bar& /*b*/) override {}             ///< 当前未用
     bool force_flush(const std::string& code) override;   ///< 仅窗口满时返回 true 并发布
 

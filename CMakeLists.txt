@@ -88,10 +88,11 @@ target_include_directories(factorlib_utils PUBLIC ${FACTORLIB_THIRDPARTY_INCLUDE
 # ---------- 组件：基础因子库（现有因子 + 新因子） ----------
 add_library(factor_basic
         src/basic_factors/tick_trans_orders.cpp
-        src/gaussian_copula_factor.cpp  # 添加高斯 Copula 因子
-        src/granger_causality_factor.cpp
-        src/granger_causality_factor.h
-        src/granger_causality_factor.cpp
+        src/stat_factors/gaussian_copula_factor.cpp  # 添加高斯 Copula 因子
+        src/stat_factors/granger_causality_factor.cpp
+        src/stat_factors/granger_causality_factor.h
+        src/stat_factors/granger_causality_factor.cpp
+        src/config/runtime_config.cpp
 )
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC include)
@@ -126,11 +127,13 @@ endif()
 if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     enable_testing()
     set(FACTORLIB_TEST_SOURCES
-        tests/tick_trans_orders_test.cpp
+            tests/basic_factors_tests/tick_trans_orders_test.cpp
         tests/test_wait.cpp
         tests/factor_compute_test.cpp
-        tests/gaussian_copula_factor_test.cpp
-        tests/granger_causality_factor_test.cpp
+            tests/stat_factors_tests/gaussian_copula_factor_test.cpp
+            tests/stat_factors_tests/granger_causality_factor_test.cpp
+            tests/utils/test_config.h
+            tests/utils/test_config.cpp
     )
     add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
     target_link_libraries(run_tests PRIVATE factor_basic factorlib_utils gtest gtest_main )

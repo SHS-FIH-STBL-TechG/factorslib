@@ -56,8 +56,9 @@ public:
 
     // —— IFactor / BaseFactor 接口 —— //
     void on_quote(const QuoteDepth& q) override;
-    void on_transaction(const Transaction& t) override;
-    void on_entrust(const Entrust& e) override;
+    // void on_transaction(const Transaction& t) override;
+    // void on_entrust(const Entrust& e) override;
+    void on_tick (const CombinedTick& x) override;   // 统一逐笔入口
     void on_bar(const Bar& b) override { (void)b; }
     bool force_flush(const std::string& code) override;
 

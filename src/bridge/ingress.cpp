@@ -25,10 +25,10 @@ namespace factorlib::bridge {
         for (const auto& x : v) {
             if (factorlib::DataAdapter::is_trade(x)) {
                 auto t = factorlib::DataAdapter::to_transaction(x);
-                for (auto& f : g_factors) f->on_transaction(t);
+                for (auto& f : g_factors) f->on_tick(t);
             } else {
                 auto e = factorlib::DataAdapter::to_entrust(x);
-                for (auto& f : g_factors) f->on_entrust(e);
+                for (auto& f : g_factors) f->on_tick(e);
             }
         }
     }

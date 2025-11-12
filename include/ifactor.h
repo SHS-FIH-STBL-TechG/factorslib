@@ -17,12 +17,14 @@ namespace factorlib {
 
         // 核心数据处理接口
         virtual void on_quote(const QuoteDepth& q) = 0;
-        virtual void on_transaction(const Transaction& t) = 0;
-        virtual void on_entrust(const Entrust& e) = 0;
-
-        // 强制刷新接口
+        // virtual void on_transaction(const Transaction& t) = 0;
+        // virtual void on_entrust(const Entrust& e) = 0;
+        virtual void on_tick(const CombinedTick& x) = 0;
+        void on_tick(const Transaction& t) { on_tick(CombinedTick(t)); }
+        void on_tick(const Entrust& e)     { on_tick(CombinedTick(e)); }
         virtual void on_bar(const Bar& b) {}
 
+        // 强制刷新接口
         virtual bool force_flush(const std::string& code) = 0;
 
         // 获取因子名称（用于日志和监控）

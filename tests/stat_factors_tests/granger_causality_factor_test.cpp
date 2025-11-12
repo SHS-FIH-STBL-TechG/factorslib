@@ -1,5 +1,5 @@
 // tests/granger_causality_factor_test.cpp
-#include "granger_causality_factor.h"
+#include "../../src/stat_factors/granger_causality_factor.h"
 #include <chrono>
 #include <cmath>
 #include <string>
@@ -39,7 +39,7 @@ inline void feed_order(GrangerCausalityFactor& f, const std::string& code,
     e.price = 0.0;
     e.side  = side;   // 买>0，卖<=0
     e.volume= vol;
-    f.on_entrust(e);
+    f.on_tick(e);
 }
 
 // 送一条报价（触发 mid 刷新 -> 产出 y_t）
@@ -283,7 +283,7 @@ TEST(GrangerCausality, GoldenCheck_WithEigen) {
             e.price         = 0.0;
             e.side          = +1;
             e.volume        = static_cast<decltype(e.volume)>(std::llround(std::fabs(xs[t])));
-            fac.on_entrust(e);
+            fac.on_tick(e);
         } else {
             Entrust e{};
             e.instrument_id = code;
@@ -291,7 +291,7 @@ TEST(GrangerCausality, GoldenCheck_WithEigen) {
             e.price         = 0.0;
             e.side          = -1;
             e.volume        = static_cast<decltype(e.volume)>(std::llround(std::fabs(xs[t])));
-            fac.on_entrust(e);
+            fac.on_tick(e);
         }
         // 用 mid 触发 y_t
         QuoteDepth q{}; q.instrument_id=code; q.data_time_ms=t*2+1;

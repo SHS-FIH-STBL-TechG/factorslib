@@ -4,8 +4,9 @@
 #include <cassert>
 #include <Eigen/Dense>
 
+#include "../config/runtime_config.h"
 #include "utils/trading_time.h"
-
+using factorlib::config::RC;
 namespace factorlib {
 
     using Vec = Eigen::VectorXd;
@@ -15,7 +16,26 @@ namespace factorlib {
                                                    const GrangerConfig& cfg)
         : BaseFactor("GrangerCausalityStrength", codes)
         , _cfg(cfg) {
+        // —— 运行时覆盖（仅当 INI 中存在对应键时才会改变默认/入参值）——
+        _cfg.window_size   = RC().geti ("granger.window_size",   _cfg.window_size);
+        _cfg.p_lags        = RC().geti ("granger.p_lags",        _cfg.p_lags);
+        _cfg.q_lags        = RC().geti ("granger.q_lags",        _cfg.q_lags);
+        _cfg.min_effective = RC().geti ("granger.min_effective", _cfg.min_effective);
+
+        // 聚合模式相关（你在 ensure_code_ 里会用到）
+        _cfg.bucket_ms     = RC().geti64("granger.bucket_ms",    _cfg.bucket_ms);
+
+        // 发布/数值处理相关
+        _cfg.use_neglog10  = RC().getb ("granger.use_neglog10",  _cfg.use_neglog10);
+        _cfg.strength_clip = RC().getd ("granger.strength_clip", _cfg.strength_clip);
+        _cfg.debug_mode    = RC().getb ("granger.debug_mode",    _cfg.debug_mode);
+
+        //选择数据来源
+        const std::string fm = RC().get("granger.feed_mode", "");
+        if (fm == "aggregated") _cfg.feed_mode = config::FeedMode::Aggregated;
+        else if (fm == "event") _cfg.feed_mode = config::FeedMode::EventDriven;
     }
+
 
     void GrangerCausalityFactor::register_topics(size_t capacity) {
         auto& bus = DataBus::instance();
@@ -32,12 +52,32 @@ namespace factorlib {
     void GrangerCausalityFactor::on_quote(const QuoteDepth& q) {
         on_any_event_(q.instrument_id, q.data_time_ms, q, std::nullopt, std::nullopt);
     }
-    void GrangerCausalityFactor::on_transaction(const Transaction& t) {
-        on_any_event_(t.instrument_id, t.data_time_ms, std::nullopt, t, std::nullopt);
+
+    void GrangerCausalityFactor::on_tick(const CombinedTick& x) {
+        if (x.kind == CombinedKind::Trade) {
+            Transaction t{};
+            t.instrument_id = x.instrument_id;
+            t.data_time_ms  = x.data_time_ms;
+            t.main_seq      = x.main_seq;
+            t.price         = x.price;
+            t.side          = x.side;
+            t.volume        = x.volume;
+            t.bid_no        = x.bid_no;
+            t.ask_no        = x.ask_no;
+            on_any_event_(t.instrument_id, t.data_time_ms, std::nullopt, t, std::nullopt);
+        } else {
+            Entrust e{};
+            e.instrument_id = x.instrument_id;
+            e.data_time_ms  = x.data_time_ms;
+            e.main_seq      = x.main_seq;
+            e.price         = x.price;
+            e.side          = x.side;
+            e.volume        = x.volume;
+            e.order_id      = x.order_id;
+            on_any_event_(e.instrument_id, e.data_time_ms, std::nullopt, std::nullopt, e);
+        }
     }
-    void GrangerCausalityFactor::on_entrust(const Entrust& e) {
-        on_any_event_(e.instrument_id, e.data_time_ms, std::nullopt, std::nullopt, e);
-    }
+
 
     // ===== 强制冲桶（仅聚合模式有意义） =====
     bool GrangerCausalityFactor::force_flush(const std::string& code) {

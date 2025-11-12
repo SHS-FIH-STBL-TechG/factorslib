@@ -45,6 +45,7 @@ namespace factorlib {
             _interval_trans_pending[code] = {};
             _interval_orders_pending[code] = {};
         }
+        _agg[code].set_bucket_ms(_cfg.bucket_size_ms);
     }
 
     void TickTransOrders::publish_bucket(const std::string& code, const BucketOutputs& out){
@@ -98,27 +99,47 @@ namespace factorlib {
     maybe_flush_and_publish(q.instrument_id, q.data_time_ms);
 }
 
-void TickTransOrders::on_transaction(const Transaction& t){
-    ensure_code(t.instrument_id);
-    if (_cfg.emit_tick_interval){
-        auto lt = _last_tick_ms[t.instrument_id];
-        if (lt > 0 && t.data_time_ms > lt){
-            _interval_trans_pending[t.instrument_id].push_back(t);
-        }
-    }
-    _agg[t.instrument_id].on_transaction(t);
-}
+    void TickTransOrders::on_tick(const CombinedTick& x){
+        if (x.kind == CombinedKind::Trade) {
+            Transaction t{};
+            t.instrument_id = x.instrument_id;
+            t.data_time_ms  = x.data_time_ms;
+            t.main_seq      = x.main_seq;
+            t.price         = x.price;
+            t.side          = x.side;
+            t.volume        = x.volume;
+            t.bid_no        = x.bid_no;
+            t.ask_no        = x.ask_no;
 
-void TickTransOrders::on_entrust(const Entrust& e){
-    ensure_code(e.instrument_id);
-    if (_cfg.emit_tick_interval){
-        auto lt = _last_tick_ms[e.instrument_id];
-        if (lt > 0 && e.data_time_ms > lt){
-            _interval_orders_pending[e.instrument_id].push_back(e);
+            ensure_code(t.instrument_id);
+            if (_cfg.emit_tick_interval){
+                auto lt = _last_tick_ms[t.instrument_id];
+                if (lt > 0 && t.data_time_ms > lt){
+                    _interval_trans_pending[t.instrument_id].push_back(t);
+                }
+            }
+            _agg[t.instrument_id].on_transaction(t);
+        } else {
+            Entrust e{};
+            e.instrument_id = x.instrument_id;
+            e.data_time_ms  = x.data_time_ms;
+            e.main_seq      = x.main_seq;
+            e.price         = x.price;
+            e.side          = x.side;
+            e.volume        = x.volume;
+            e.order_id      = x.order_id;
+
+            ensure_code(e.instrument_id);
+            if (_cfg.emit_tick_interval){
+                auto lt = _last_tick_ms[e.instrument_id];
+                if (lt > 0 && e.data_time_ms > lt){
+                    _interval_orders_pending[e.instrument_id].push_back(e);
+                }
+            }
+            _agg[e.instrument_id].on_entrust(e);
         }
     }
-    _agg[e.instrument_id].on_entrust(e);
-}
+
 
 bool TickTransOrders::force_flush(const std::string& code){
     auto it = _agg.find(code);

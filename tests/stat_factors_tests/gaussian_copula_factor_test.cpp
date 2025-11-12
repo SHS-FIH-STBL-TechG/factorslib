@@ -1,7 +1,7 @@
 // tests/gaussian_copula_factor_test.cpp
 #include <gtest/gtest.h>
 #include <cmath>
-#include "gaussian_copula_factor.h"
+#include "../../src/stat_factors/gaussian_copula_factor.h"
 #include "utils/databus.h"
 #include "utils/types.h"
 
@@ -76,7 +76,7 @@ protected:
                 e.volume = 80 * (i + 1);
             }
 
-            factor->on_entrust(e);
+            factor->on_tick(e);
         }
 
         // 检查是否有预测值发布
@@ -134,7 +134,7 @@ protected:
                 e.volume = 100;
             }
 
-            test_factor->on_entrust(e);
+            test_factor->on_tick(e);
         }
 
         // 窗口未满时不应该有预测值
@@ -162,7 +162,7 @@ protected:
             e.side = (i % 2 == 0) ? 1 : -1;
             e.volume = 100;
 
-            factor->on_entrust(e);
+            factor->on_tick(e);
         }
 
         // 强制刷新
@@ -194,7 +194,7 @@ protected:
             e.side = (i % 2 == 0) ? 1 : -1;
             e.volume = 1000000;  // 大成交量
 
-            factor->on_entrust(e);
+            factor->on_tick(e);
         }
 
         auto& bus = DataBus::instance();
@@ -231,7 +231,7 @@ protected:
         e.side = (i % 2 == 0) ? 1 : -1;
         e.volume = 100 + (i % 50);
 
-        factor->on_entrust(e);
+        factor->on_tick(e);
     }
 
     auto end = std::chrono::high_resolution_clock::now();

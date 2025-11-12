@@ -10,7 +10,9 @@
 #include "utils/nms_bucket_aggregator.h"
 #include "utils/trading_time.h"
 #include "utils/types.h"
+#include "../config/runtime_config.h"
 
+using factorlib::config::RC;
 /**
  * @file tick_trans_orders.h
  * @brief 示例“基础因子”：把 tick / 成交 / 委托 按 N 毫秒聚合到时间桶，
@@ -42,18 +44,23 @@ struct TickTransOrdersConfig {
 class TickTransOrders : public BaseFactor{
 public:
     explicit TickTransOrders(const TickTransOrdersConfig& cfg, std::vector<std::string> codes)
-        : BaseFactor("TickTransOrders", std::move(codes)), _cfg(cfg) {}
+        : BaseFactor("TickTransOrders", std::move(codes)), _cfg(cfg) {
+        _cfg.bucket_size_ms     = RC().geti64("tick_trans_orders.bucket_size_ms", _cfg.bucket_size_ms);
+        _cfg.emit_tick_interval = RC().getb ("tick_trans_orders.emit_tick_interval", _cfg.emit_tick_interval);
+
+    }
 
     /// 注册五个 topic，容量默认 120（可配置）
     static void register_topics(size_t capacity=120);
 
     /// 喂入一条行情（用于计算增量与中价）
     void on_quote(const QuoteDepth& q) override;
-    /// 喂入一条成交（用于桶内切片）
-    void on_transaction(const Transaction& t) override;
-    /// 喂入一条委托（用于桶内切片）
-    void on_entrust(const Entrust& e) override;
+    // /// 喂入一条成交（用于桶内切片）
+    // void on_transaction(const Transaction& t) override;
+    // /// 喂入一条委托（用于桶内切片）
+    // void on_entrust(const Entrust& e) override;
 
+    void on_tick (const CombinedTick& x) override;   // 统一逐笔入口
     /// 强制产出某代码的当前桶（返回是否产出成功）
     bool force_flush(const std::string& code) override;
 

@@ -2,14 +2,16 @@
 #include "gaussian_copula_factor.h"
 #include <Eigen/Dense>
 
-#include "utils/math/incremental_rank.h"
-#include "utils/math/statistics.h"
-#include "utils/math/distributions.h"
-#include "utils/math/linear_algebra.h"
-#include "utils/trading_time.h"
-#include "utils/log.h"
 #include "utils/databus.h"
+#include "utils/log.h"
+#include "utils/trading_time.h"
+#include "../config/runtime_config.h"
+#include "utils/math/distributions.h"
+#include "utils/math/incremental_rank.h"
+#include "utils/math/linear_algebra.h"
+#include "utils/math/statistics.h"
 
+using factorlib::config::RC;
 namespace factorlib {
 
 // 主题常量（与 demo 集成一致）
@@ -21,7 +23,12 @@ GaussianCopulaFactor::GaussianCopulaFactor(const GaussianCopulaConfig& cfg,
                                            std::vector<std::string> codes)
     // ★ 改造点：把 name/codes 交给 BaseFactor 管理（行为不变）
     : BaseFactor("GaussianCopulaFactor", std::move(codes))
-    , _cfg(cfg) {}
+    , _cfg(cfg) {
+    _cfg.window_size    = RC().geti ("gaussian.window_size",    _cfg.window_size);
+    _cfg.regularization = RC().getd ("gaussian.regularization", _cfg.regularization);
+    _cfg.debug_mode     = RC().getb ("gaussian.debug_mode",     _cfg.debug_mode);
+
+}
 
 void GaussianCopulaFactor::register_topics(size_t capacity) {
     auto& bus = DataBus::instance();
@@ -83,23 +90,31 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
     state.has_initial_price = true;
 }
 
-void GaussianCopulaFactor::on_entrust(const Entrust& e) {
-    ensure_code(e.instrument_id);
-    auto& state = _states[e.instrument_id];
+    void GaussianCopulaFactor::on_tick(const CombinedTick& x) {
+    if (x.kind == CombinedKind::Order) {
+        Entrust e{};
+        e.instrument_id = x.instrument_id;
+        e.data_time_ms  = x.data_time_ms;
+        e.main_seq      = x.main_seq;
+        e.price         = x.price;
+        e.side          = x.side;
+        e.volume        = x.volume;
+        e.order_id      = x.order_id;
 
-    // OFI = 买委托量 - 卖委托量（保持原逻辑）
-    if (e.side == 1) {
-        state.current_ofi += static_cast<double>(e.volume);
-    } else if (e.side == -1) {
-        state.current_ofi -= static_cast<double>(e.volume);
+        ensure_code(e.instrument_id);
+        auto& state = _states[e.instrument_id];
+        if (e.side == 1) {
+            state.current_ofi += static_cast<double>(e.volume);
+        } else if (e.side == -1) {
+            state.current_ofi -= static_cast<double>(e.volume);
+        }
+        state.current_volume += static_cast<double>(e.volume);
+    } else {
+        // 原 on_transaction 为注释性空操作，按原语义保持为空
+        (void)x;
     }
-    // 成交量累计
-    state.current_volume += static_cast<double>(e.volume);
 }
 
-void GaussianCopulaFactor::on_transaction(const Transaction& /*t*/) {
-    // 原注释：成交数据可用于验证，但主要计算依赖委托数据
-}
 
 // ★ 保持原 force_flush 语义：窗口未满 → 返回 false；已满 → 发布并返回 true
 bool GaussianCopulaFactor::force_flush(const std::string& code) {
