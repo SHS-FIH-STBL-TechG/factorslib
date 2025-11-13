@@ -93,6 +93,8 @@ add_library(factor_basic
         src/stat_factors/granger_causality_factor.h
         src/stat_factors/granger_causality_factor.cpp
         src/config/runtime_config.cpp
+        src/stat_factors/least_squares_info_gain_factor.h
+        src/stat_factors/least_squares_info_gain_factor.cpp
 )
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC include)
@@ -134,6 +136,7 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/stat_factors_tests/granger_causality_factor_test.cpp
             tests/utils/test_config.h
             tests/utils/test_config.cpp
+            tests/stat_factors_tests/least_squares_info_gain_factor_test.cpp
     )
     add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
     target_link_libraries(run_tests PRIVATE factor_basic factorlib_utils gtest gtest_main )

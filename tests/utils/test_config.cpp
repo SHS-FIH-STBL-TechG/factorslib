@@ -82,4 +82,122 @@ vector<vector<string>> read_csv(const string& path, char sep) {
     return rows;
 }
 
+    std::vector<factorlib::Bar> read_bars_from_cfg() {
+    std::vector<factorlib::Bar> out;
+
+    const auto& cfg = global();
+    std::string path = cfg.get("global.bars_csv", "");
+    if (path.empty()) {
+        path = cfg.get("bars_csv", "");
+    }
+    if (path.empty()) {
+        return out;
+    }
+
+    auto rows = read_csv(path);
+    if (rows.size() < 2) return out;  // header + 至少一行数据
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        const auto& r = rows[i];
+        if (r.size() < 39) continue;   // 你提供的 bars 字段一共是 40 列
+
+        factorlib::Bar b{};
+        b.instrument_id = r[0];                     // instrument_id
+        b.data_time_ms  = std::stoll(r[1]);         // data_time_ms
+        b.open          = std::stod(r[2]);          // open
+        b.high          = std::stod(r[3]);          // high
+        b.low           = std::stod(r[4]);          // low
+        b.close         = std::stod(r[5]);          // close
+        b.volume        = static_cast<uint64_t>(std::stoull(r[6]));  // volume
+        b.turnover      = std::stod(r[7]);          // turnover
+        b.interval_ms   = std::stoi(r[8]);          // interval_ms
+
+        // 其余 9~39 列你现在的 Bar 结构没字段就先不塞，
+        // 但 CSV 里的值会完整保留，后面其他因子自己通过 read_csv(path) 用原始行也行。
+
+        out.push_back(b);
+    }
+
+    return out;
+}
+
+std::vector<factorlib::Transaction> read_transactions_from_cfg() {
+    std::vector<factorlib::Transaction> out;
+
+    const auto& cfg = global();
+    std::string path = cfg.get("global.transactions_csv", "");
+    if (path.empty()) {
+        path = cfg.get("transactions_csv", "");
+    }
+    if (path.empty()) {
+        return out;
+    }
+
+    auto rows = read_csv(path);
+    if (rows.size() < 2) return out;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        const auto& r = rows[i];
+        if (r.size() < 17) continue;  // 你给的 transactions 一共 17 列
+
+        factorlib::Transaction t{};
+        t.instrument_id = r[0];                              // instrument_id
+        t.data_time_ms  = std::stoll(r[1]);                   // data_time_ms
+        t.main_seq      = static_cast<uint64_t>(std::stoull(r[2])); // main_seq
+        t.price         = std::stod(r[3]);                    // price
+        t.side          = std::stoi(r[4]);                    // side
+        t.volume        = static_cast<uint64_t>(std::stoull(r[5])); // volume
+        t.bid_no        = static_cast<uint64_t>(std::stoull(r[6])); // bid_no
+        t.ask_no        = static_cast<uint64_t>(std::stoull(r[7])); // ask_no
+
+        // 剩下 9~16 列（channel_id,...,amount）目前没直接映射到 Transaction 结构里，
+        // CSV 里依然完整保留，之后你别的测试/因子可以直接用 read_csv 查看原始列。
+
+        out.push_back(t);
+    }
+
+    return out;
+}
+
+std::vector<factorlib::QuoteDepth> read_quotes_from_cfg() {
+    std::vector<factorlib::QuoteDepth> out;
+
+    const auto& cfg = global();
+    std::string path = cfg.get("global.quotes_csv", "");
+    if (path.empty()) {
+        path = cfg.get("quotes_csv", "");
+    }
+    if (path.empty()) {
+        return out;
+    }
+
+    auto rows = read_csv(path);
+    if (rows.size() < 2) return out;
+
+    for (size_t i = 1; i < rows.size(); ++i) {
+        const auto& r = rows[i];
+        // 你给的 snapshot_quotes 一共 96 列；我们至少需要到 bid_price_1
+        if (r.size() < 90) continue;
+
+        factorlib::QuoteDepth q{};
+        q.instrument_id = r[0];               // instrument_id
+        q.trading_day   = std::stoi(r[1]);    // trading_day
+        q.data_time_ms  = std::stoll(r[2]);   // data_time_ms
+
+        // ask_price_1 在第 6 列（索引 5）
+        q.ask_price     = std::stod(r[5]);
+        // bid_price_1 在第 38 列（索引 37）
+        q.bid_price     = std::stod(r[37]);
+
+        // 其余深度档、成交统计等你后面如果需要，可以在 QuoteDepth 结构里扩字段，
+        // 再从 r[...] 中填充。
+
+        q.volume   = 0;
+        q.turnover = 0.0;
+        out.push_back(q);
+    }
+
+    return out;
+}
+
 } // namespace testcfg
