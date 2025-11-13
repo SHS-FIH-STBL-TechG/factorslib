@@ -330,12 +330,6 @@ struct Entrust {
 };
 ```
 
-> 说明：
-> - 虽然 IFactor 接口已经不再提供 `on_transaction` / `on_entrust` 这两个虚函数，  
-    >   但 `Transaction` / `Entrust` 这两类结构体仍然是框架内部的重要事件模型。
-> - 它们主要由 `DataAdapter` 和 `NmsBucketAggregator` 等组件使用：从混合逐笔表中构造事件、在时间桶内保存完整逐笔明细等。
-> - 在因子实现层，统一入口仍然是 `on_tick(const CombinedTick&)`，是否需要进一步区分成交/委托取决于具体业务逻辑。
-
 #### 交易时间工具 (trading_time.h/cpp)
 ```cpp
 // TradingTime：提供 A 股常用交易时间判断/推算工具
@@ -370,12 +364,13 @@ public:
 - 支持中位秩、分位数等统计量
 - 内存高效的排序维护
 
-除此之外，当前 `math` 目录下还包含以下模块（这里按实际头文件简单介绍用途）：
 
-- `numeric_utils.h`：提供收益率计算、近似比较等数值工具，对一些边界情况做了数值稳定性处理。
-- `linear_algebra.h`：基于 Eigen 的矩阵/向量运算工具，用于协方差矩阵、特征分解等线性代数计算，在高斯/格兰杰等因子里会用到。
+除此之外，当前 `math` 目录下还包含以下模块（这里只按头文件简单说明用途）：
+
+- `numeric_utils.h`：数值工具函数（如收益率计算、边界检查等），对一些边界情况做了数值稳定性处理。
+- `linear_algebra.h`：基于 Eigen 的矩阵/向量运算工具，用于协方差矩阵、回归等线性代数计算。
 - `sliding_normal_eq.h`：与滑窗普通最小二乘（OLS）相关的辅助工具，用于在滑动窗口上构造和更新回归模型的法方程。
-- `distributions.h`：分布函数与 p 值计算工具，例如 F 分布右尾概率等，在统计检验类因子（如格兰杰因子）中用于将统计量转化为显著性水平。
+- `distributions.h`：分布函数与 p 值计算工具（例如 F 分布右尾概率），在统计检验类因子中用于将统计量转为显著性水平。
 
 ---
 
@@ -385,23 +380,70 @@ public:
 class DataAdapter {
 public:
     // —— 快照转换 ——
-    static QuoteDepth from_snapshot_sh(const SnapshotStockSH& snapshot);    // 上交所
-    static QuoteDepth from_snapshot_sz(const std_SnapshotStockSZ& snapshot);// 深交所
-    
+    static QuoteDepth from_snapshot_sh(const SnapshotStockSH& snapshot);     // 上交所
+    static QuoteDepth from_snapshot_sz(const std_SnapshotStockSZ& snapshot); // 深交所
+
     // —— 成交转换 ——
     static Transaction from_ord_exec(const OrdAndExeInfo& ord_exec);
-    
-    // —— 混合逐笔识别与转换 ——（OrdAndExeInfo 是“成交+委托一张表”的逐笔记录）
+
+    // —— 逐笔委托/成交的拆分与转换 ——（OrdAndExeInfo 是“成交+委托一张表”的逐笔记录）
     static bool is_trade(const OrdAndExeInfo& x);
     static Transaction to_transaction(const OrdAndExeInfo& x);
-    static Entrust to_entrust(const OrdAndExeInfo& x);
-    
-    // —— 价格标准化 ——
-    static double normalize_price(uint32_t raw_price);
+    static Entrust     to_entrust(const OrdAndExeInfo& x);
+
+    // —— K线转换 ——
+    static Bar from_kline(const BasicandEnhanceKLine& k);
+
+    // —— 工具函数：价格/代码转换 ——
+    static double      normalize_price(uint32_t raw_price);
+    static std::string security_id_to_string(uint32_t security_id);
 };
 ```
 
 ---
+
+
+### 6. demo 接入路径 - 从原始表到因子回调
+
+以当前 demo + factors_lib 工程为例，整体数据流大致如下：
+
+1. **demo 侧**只关心自己的三种原始记录（定义在 `demo_header/DataType.h` 中）：
+    - `SnapshotStockSH` / `std_SnapshotStockSZ`：盘口快照
+    - `OrdAndExeInfo`：逐笔委托 + 成交一张混合表
+    - `BasicandEnhanceKLine`：K 线数据
+
+2. **程序启动时**，demo 将因子实例通过 `factorlib::bridge::set_factors(...)` 注册给入口层 `bridge/ingress`。
+
+3. **demo 在各自的数据回调中**，只需一行调用入口函数，把原始表批量喂给库：
+   ```cpp
+   factorlib::bridge::ingest_snapshot(snapshot_vec);
+   factorlib::bridge::ingest_ont(ord_and_exec_vec);
+   factorlib::bridge::ingest_kline(kline_vec);
+   ```
+
+4. `ingress.cpp` 内部使用 `DataAdapter` 做格式转换和分发：
+    - 快照：调用 `DataAdapter::from_snapshot_sh/sz` 得到 `QuoteDepth`，然后对每个已注册因子调用 `f->on_quote(qd)`；
+    - 逐笔表：
+        - 先用 `DataAdapter::is_trade(x)` 判断该行是成交还是委托；
+        - 若是成交，调用 `DataAdapter::to_transaction(x)` 得到 `Transaction`，再调用 `f->on_tick(t)`；
+        - 若是委托，调用 `DataAdapter::to_entrust(x)` 得到 `Entrust`，再调用 `f->on_tick(e)`；
+    - K 线：调用 `DataAdapter::from_kline` 得到 `Bar`，再调用 `f->on_bar(b)`。
+
+5. **在因子实现层**：
+    - 因子继承 `BaseFactor` / `IFactor`，一般只需要重写：
+      ```cpp
+      void on_quote(const QuoteDepth& q) override;
+      void on_tick (const CombinedTick& x) override;
+      bool force_flush(const std::string& code) override;
+      ```  
+    - `IFactor` 内部已经提供了便捷重载：
+      ```cpp
+      void on_tick(const Transaction& t) { on_tick(CombinedTick(t)); }
+      void on_tick(const Entrust&   e)   { on_tick(CombinedTick(e)); }
+      ```  
+      因此入口层调用 `f->on_tick(t/e)` 时，会统一经由 `CombinedTick` 转发到因子实现的 `on_tick(const CombinedTick& x)`。
+
+总结一下：demo 只负责维护三张原始表并在合适时机调用 `ingest_*`；DataAdapter + ingress 完成格式转换和“成交/委托”识别；因子本身只关注 `QuoteDepth` 与 `CombinedTick` 即可。
 
 ## 🚀 快速开始
 
@@ -506,9 +548,8 @@ target_link_libraries(demo PRIVATE factor_basic factorlib_utils)
 //   - 文件名与类名一致，便于查找与导航
 // 约定 2：接口
 //   - 至少实现 IFactor 的 on_quote 和 on_tick(CombinedTick)
-//   - 一般不再直接 override on_transaction/on_entrust，
-//     如确需区分成交/委托，建议在公共入口或工具函数中根据 CombinedTick::kind 做一次分流，
-//     尽量避免在每个因子里重复手写 `if (x.kind == ...)`，新的因子实现可直接基于 CombinedTick 字段编写逻辑
+//   - 新因子一般不再直接 override on_transaction/on_entrust，
+//     如确需区分成交/委托，推荐在公共入口/工具函数中统一分流，避免在每个因子里重复手写 kind 分支
 //   - 若需要在收盘/日切产出结果，重写 force_flush
 // 约定 3：按 code 初始化
 //   - 首次见到某个 code 时，创建该 code 的聚合器/窗口等状态
@@ -552,21 +593,18 @@ public:
         ensure_code(x.instrument_id);
         auto& s = _state[x.instrument_id];
 
-        // 1) 与 on_quote 一样，先按时间检测是否需要产出上一个桶
         BucketOutputs out;
         if (s.agg.flush_if_crossed(x.data_time_ms, out)) {
             publish_results(x.instrument_id, out);
         }
 
-        // 2) 这里的示例只演示基于 CombinedTick 的增量逻辑：
-        //    可以直接使用 x.price / x.volume / x.data_time_ms 等字段构建自己的状态，
-        //    而不必在每个因子里都手写 `if (x.kind == ...)` 分支。
-        //    实际工程中，可以参考当前 Tick/高斯/格兰杰因子，在公共入口层统一做一次 kind 分流，
-        //    然后再按需调用本因子的 on_tick(CombinedTick)。
+        // 这里直接基于 CombinedTick 的字段做本因子的增量逻辑，
+        // 是否按成交/委托拆分，由入口层或公共工具统一处理，避免在每个因子里重复写 kind 分支。
+        (void)x;
     }
 
 
-    // —— Bar 回调：如按分钟 Bar 进行补充对齐/收口，可按需实现 ——
+// —— Bar 回调：如按分钟 Bar 进行补充对齐/收口，可按需实现 ——
     void on_bar(const Bar& b) override {
         // 可选：根据 Bar 触发额外逻辑
     }
@@ -777,10 +815,7 @@ void MyCustomFactor::on_quote(const QuoteDepth& q) {
 
 void MyCustomFactor::on_tick(const CombinedTick& x) {
     ensure_code(x.instrument_id);
-    // 这里仅给出基于 CombinedTick 的示意写法：
-    //  - 可以按需要使用 x.price / x.volume / x.data_time_ms 等字段
-    //  - 如果在公共入口层已经按 kind 拆分并维护了聚合状态，则这里可以专注于“因子本身”的逻辑
-    (void)x;
+    // 按需使用 x.price / x.volume / x.data_time_ms 等字段实现本因子逻辑
 }
 
 bool MyCustomFactor::force_flush(const std::string& code) {
