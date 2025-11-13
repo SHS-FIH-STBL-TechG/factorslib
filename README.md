@@ -21,48 +21,75 @@ FactorLib 是一个专为金融量化分析设计的 C++ 因子计算框架，�
 ```
 factors_lib/
 ├── CMakeLists.txt              # 项目构建配置
+├── README.md
+├── docs/                       # 额外文档与示例说明
+│   ├── demo_wiring.md
+│   └── µû░σó₧σ¢áσ¡Éσ╝ÇσÅæΣ╕ÄµÄÑσàÑµîçσìù.md
 ├── include/                    # 公共头文件
 │   ├── factorlib/bridge/
-│   │   └── ingress.h          # 数据入口桥接接口
-│   ├── ifactor.h              # 因子基类接口定义
-│   └── utils/                 # 工具类头文件
-│       ├── data_adapter.h     # 多源数据格式转换
-│       ├── databus.h          # 数据总线通信系统
-│       ├── log.h              # 分级日志系统
-│       ├── math/              # 数学工具库
-│       │   ├── distributions.h    # 概率分布计算
-│       │   ├── incremental_rank.h # 增量排名算法
-│       │   ├── linear_algebra.h   # 线性代数运算
-│       │   ├── numeric_utils.h    # 数值工具函数
-│       │   └── statistics.h       # 统计计算
+│   │   └── ingress.h           # 数据入口桥接接口
+│   ├── ifactor.h               # 因子基类接口定义（IFactor / BaseFactor）
+│   └── utils/                  # 工具类头文件
+│       ├── config/
+│       │   └── feed_mode.h     # 数据喂入模式配置
+│       ├── data_adapter.h      # 多源数据格式转换
+│       ├── databus.h           # 数据总线通信系统
+│       ├── log.h               # 分级日志系统
+│       ├── math/               # 数学工具库
+│       │   ├── distributions.h     # 概率分布计算
+│       │   ├── incremental_rank.h  # 增量排名算法
+│       │   ├── linear_algebra.h    # 线性代数工具
+│       │   ├── numeric_utils.h     # 数值工具
+│       │   ├── sliding_normal_eq.h # 增量法正则方程
+│       │   └── statistics.h        # 统计计算
 │       ├── nms_bucket_aggregator.h # 时间桶聚合器
-│       ├── trading_time.h     # 交易时间处理
-│       └── types.h            # 统一数据类型定义
-├── src/                       # 源文件实现
-│   ├── basic_factors/         # 基础因子实现
-│   │   ├── tick_trans_orders.cpp  # Tick数据转换因子
+│       ├── trading_time.h      # 交易时间处理
+│       └── types.h             # 统一数据类型定义（QuoteDepth / Transaction / Entrust / CombinedTick / Bar 等）
+├── src/                        # 源文件实现
+│   ├── basic_factors/          # 基础因子实现
+│   │   ├── tick_trans_orders.cpp
 │   │   └── tick_trans_orders.h
 │   ├── bridge/
-│   │   └── ingress.cpp        # 数据入口实现
-│   ├── gaussian_copula_factor.cpp # 高斯Copula因子
-│   ├── gaussian_copula_factor.h
-│   └── utils/                 # 工具类实现
-│       ├── data_adapter.cpp   # 数据适配器
-│       ├── log.cpp            # 日志系统
-│       ├── nms_bucket_aggregator.cpp # 时间桶聚合
-│       └── trading_time.cpp   # 交易时间
-├── tests/                     # 测试代码
-│   ├── factor_compute_test.cpp    # 因子计算测试
-│   ├── gaussian_copula_factor_test.cpp # 高斯Copula测试
-│   ├── gtest_printer_zh.h     # 中文测试输出
-│   ├── test_wait.cpp          # 测试等待工具
-│   ├── tick_trans_orders_test.cpp # Tick转换测试
-│   └── utils/
-│       └── data_gen.h         # 测试数据生成器
-└── third_party/               # 第三方依赖
-    ├── eigen/                 # Eigen线性代数库
-    ├── googletest/            # GoogleTest测试框架
-    └── spdlog/                # spdlog日志库
+│   │   └── ingress.cpp         # 数据入口实现
+│   ├── config/                 # 运行时配置
+│   │   ├── runtime_config.cpp
+│   │   ├── runtime_config.h
+│   │   └── runtime_config.ini
+│   ├── stat_factors/           # 统计因子实现
+│   │   ├── gaussian_copula_factor.cpp
+│   │   ├── gaussian_copula_factor.h
+│   │   ├── granger_causality_factor.cpp
+│   │   └── granger_causality_factor.h
+│   └── utils/                  # 工具类实现
+│       ├── data_adapter.cpp
+│       ├── log.cpp
+│       ├── nms_bucket_aggregator.cpp
+│       └── trading_time.cpp
+├── tests/                      # 测试代码
+│   ├── basic_factors_tests/
+│   │   └── tick_trans_orders_test.cpp
+│   ├── stat_factors_tests/
+│   │   ├── gaussian_copula_factor_test.cpp
+│   │   └── granger_causality_factor_test.cpp
+│   ├── integration/
+│   │   └── demo_min_e2e_test.cpp   # Demo 级 E2E 测试
+│   ├── utils/
+│   │   ├── data_gen.h              # 测试数据生成器
+│   │   ├── test_config.cpp
+│   │   ├── test_config.h
+│   │   └── test_config.ini
+│   ├── data/                       # 测试用样例数据
+│   │   ├── bars_minute_csv.csv
+│   │   ├── snapshot_quotes_csv.csv
+│   │   └── transactions_tick_csv.csv
+│   ├── factor_compute_test.cpp
+│   ├── gtest_printer_zh.h
+│   └── test_wait.cpp
+└── third_party/               # 第三方依赖（优先使用仓库内版本）
+    ├── boost/                 # 通过 bcp 导出的最小 Boost 头（必须存在）
+    ├── eigen/                 # Eigen 线性代数库（头文件）
+    ├── googletest/            # GoogleTest 测试框架
+    └── spdlog/                # spdlog 日志库（可选）
 ```
 
 ---
@@ -73,64 +100,91 @@ factors_lib/
 
 **设计目标**：为所有因子提供统一的接口规范，确保代码的一致性和可维护性。
 
-**核心接口**：
+**核心接口（与 `include/ifactor.h` 设计保持一致）**：
 ```cpp
 // IFactor：所有因子的抽象基类，定义了数据输入与刷新/元数据等接口
 class IFactor {
 public:
     virtual ~IFactor() = default;
-    
+
     // —— 核心数据处理接口 ——
-    // on_quote：收到一条 L2 行情（快照/盘口）时调用
+    // L2 行情（快照/盘口）
     virtual void on_quote(const QuoteDepth& q) = 0;
-    // on_transaction：收到一条逐笔成交记录时调用
-    virtual void on_transaction(const Transaction& t) = 0;
-    // on_entrust：收到一条逐笔委托（下单/撤单）记录时调用
-    virtual void on_entrust(const Entrust& e) = 0;
-    
-    // —— 强制刷新接口 ——
-    // on_bar：时间到达一个“Bar/时间桶”边界时的回调（可选）
+
+    // 统一逐笔入口（成交 / 委托 都通过 CombinedTick 喂入）
+    virtual void on_tick(const CombinedTick& x) = 0;
+
+    // 若调用方已有 Transaction / Entrust，可以通过适配函数喂入：
+    // （典型实现：内部构造 CombinedTick 后转调 on_tick）
+    void on_tick(const Transaction& t); // 适配函数
+    void on_tick(const Entrust& e);     // 适配函数
+
+    // Bar / 时间桶 回调（如按分钟 / 日线喂入）
     virtual void on_bar(const Bar& b) {}
-    // force_flush：一般在收盘/日切时调用，强制把当前桶/状态刷新产出
-    // 返回 true 表示有产出，false 表示无需产出或失败
+
+    // —— 强制刷新接口 ——
+    // 在收盘/日切/策略要求的特殊时刻，强制产出某个 code 当前桶的结果
     virtual bool force_flush(const std::string& code) = 0;
-    
+
     // —— 元数据接口 ——
-    // get_name：因子的人类可读名称
+    // 因子的人类可读名称（用于日志和监控）
     virtual std::string get_name() const = 0;
-    // get_codes：这个因子关心的标的集合（可为空，表示“遇到什么算什么”）
+
+    // 这个因子关心的标的集合（可为空，表示“遇到什么算什么”）
     virtual const std::vector<std::string>& get_codes() const = 0;
 };
 ```
-**实现特点**：
-- **事件驱动设计**：通过 `on_quote`、`on_transaction`、`on_entrust` 方法处理不同类型的数据
-- **强制刷新机制**：`force_flush` 方法确保在收盘或特定时刻输出计算结果
-- **多代码支持**：单个因子实例可以同时监控多个股票代码
 
-**BaseFactor 基类**：
+**实现特点**：
+
+- **事件驱动设计**：使用 `on_quote` + `on_tick(CombinedTick)` 处理不同类型的数据
+- **统一 Tick 入口**：成交 / 委托先在入口层合并为 `CombinedTick`，简化因子实现
+- **强制刷新机制**：`force_flush` 确保在收盘或特定时刻输出计算结果
+- **多代码支持**：单个因子实例可以同时监控多个 code
+
+**BaseFactor 基类（公共元数据 + code 初始化钩子）**：
 ```cpp
-// BaseFactor：抽象出公共元数据（名称/标的集合）
-// 建议派生类在自身维护 per-code 的状态（如聚合器/窗口等），并在首次见到 code 时初始化
 class BaseFactor : public IFactor {
 protected:
-    std::vector<std::string> _codes;  // 关心的标的集合
-    std::string _name;                // 因子名称
+    std::vector<std::string> _codes;          // 关心的标的集合
+    std::string              _name;           // 因子名称
+    std::unordered_set<std::string> _known_codes; // 已初始化过的 code
 
 public:
     BaseFactor(const std::string& name, std::vector<std::string> codes)
-        : _name(name), _codes(std::move(codes)) {}
-    
+        : _codes(std::move(codes)), _name(name) {}
+
     // 默认返回因子名称
     std::string get_name() const override { return _name; }
+
     // 默认返回关注的标的集合
     const std::vector<std::string>& get_codes() const override { return _codes; }
+
+protected:
+    /**
+     * @brief 确保某个 code 的内部状态已初始化（只在首次见到该 code 时触发）
+     * 典型用途：
+     *  - 为该 code 创建窗口/缓存/统计器
+     *  - 注册 DataBus topic 的订阅/发布钩子
+     *  - 建立跨模块的索引（如 code->state 映射）
+     */
+    void ensure_code(const std::string& code) {
+        if (_known_codes.find(code) != _known_codes.end()) return;
+        _known_codes.insert(code);
+        on_code_added(code);
+    }
+
+    /**
+     * @brief 派生类可覆盖此钩子，完成 code 级别的自定义初始化
+     * 缺省实现为空。
+     */
+    virtual void on_code_added(const std::string& /*code*/) {}
 };
 ```
 
 > **code 是什么？**  
 > 表示“标的物唯一标识符”。例如：股票 `600000.SH`、期货 `IF2506`、指数/ETF `000300.SH`、加密交易对 `BTCUSDT` 等。框架按 **code 维度** 隔离状态与计算。
 
----
 
 ### 2. 数据总线 (DataBus) - 因子通信的神经系统
 
@@ -276,6 +330,12 @@ struct Entrust {
 };
 ```
 
+> 说明：
+> - 虽然 IFactor 接口已经不再提供 `on_transaction` / `on_entrust` 这两个虚函数，  
+    >   但 `Transaction` / `Entrust` 这两类结构体仍然是框架内部的重要事件模型。
+> - 它们主要由 `DataAdapter` 和 `NmsBucketAggregator` 等组件使用：从混合逐笔表中构造事件、在时间桶内保存完整逐笔明细等。
+> - 在因子实现层，统一入口仍然是 `on_tick(const CombinedTick&)`，是否需要进一步区分成交/委托取决于具体业务逻辑。
+
 #### 交易时间工具 (trading_time.h/cpp)
 ```cpp
 // TradingTime：提供 A 股常用交易时间判断/推算工具
@@ -310,6 +370,13 @@ public:
 - 支持中位秩、分位数等统计量
 - 内存高效的排序维护
 
+除此之外，当前 `math` 目录下还包含以下模块（这里按实际头文件简单介绍用途）：
+
+- `numeric_utils.h`：提供收益率计算、近似比较等数值工具，对一些边界情况做了数值稳定性处理。
+- `linear_algebra.h`：基于 Eigen 的矩阵/向量运算工具，用于协方差矩阵、特征分解等线性代数计算，在高斯/格兰杰等因子里会用到。
+- `sliding_normal_eq.h`：与滑窗普通最小二乘（OLS）相关的辅助工具，用于在滑动窗口上构造和更新回归模型的法方程。
+- `distributions.h`：分布函数与 p 值计算工具，例如 F 分布右尾概率等，在统计检验类因子（如格兰杰因子）中用于将统计量转化为显著性水平。
+
 ---
 
 ### 5. 数据适配器 (DataAdapter) - 格式转换层
@@ -324,7 +391,7 @@ public:
     // —— 成交转换 ——
     static Transaction from_ord_exec(const OrdAndExeInfo& ord_exec);
     
-    // —— 逐笔拆分 ——
+    // —— 混合逐笔识别与转换 ——（OrdAndExeInfo 是“成交+委托一张表”的逐笔记录）
     static bool is_trade(const OrdAndExeInfo& x);
     static Transaction to_transaction(const OrdAndExeInfo& x);
     static Entrust to_entrust(const OrdAndExeInfo& x);
@@ -341,8 +408,10 @@ public:
 ### 环境要求
 - **操作系统**：Linux / Windows / macOS
 - **编译器**：C++17（GCC 7+ / Clang 5+ / MSVC 2019+）
-- **构建工具**：CMake 3.10+
-- **第三方**：优先使用仓库 `third_party/`（Eigen / gtest / spdlog）
+- **构建工具**：CMake 3.15+（当前 CMakeLists.txt 要求）
+- **第三方**：
+    - 必需：`third_party/boost`（通过 bcp 导出的最小 Boost 头文件）
+    - 推荐：`third_party/eigen`（线性代数）、`third_party/googletest`（若开启测试）、`third_party/spdlog`（更好的日志输出）
 
 ### 构建项目
 ```bash
@@ -353,7 +422,7 @@ cd factors_lib
 # 2) 生成构建目录
 mkdir build && cd build
 
-# 3) 配置（Release 示例）
+# 3) 配置（可按需添加 -D 选项）
 cmake .. -DCMAKE_BUILD_TYPE=Release
 
 # 4) 编译
@@ -370,8 +439,6 @@ cmake .. -G "Visual Studio 16 2019" -A x64
 cmake --build . --config Release
 ```
 
----
-
 ## 🧩 与 Demo 的集成
 
 **方式 1：Demo 把本库作为子目录（源码集成）**
@@ -384,8 +451,11 @@ add_executable(demo main.cpp)
 target_link_libraries(demo PRIVATE factor_basic factorlib_utils)
 ```
 
-**方式 2：同工作区构建（你当前做法）**
-- 本库 CMake 已加入 `../demo_header` 路径；Demo 直接 include 并链接 `factor_basic` 即可。
+**方式 2：同工作区构建（推荐做法）**
+- 若 Demo 与本库放在同一工作区，可以在上层 CMake 中把 `../demo_header` 加入 include 路径，
+  并链接 `factor_basic` / `factorlib_utils`；本仓 `CMakeLists.txt` 中已留有注释示例。
+
+---
 
 ---
 
@@ -393,13 +463,16 @@ target_link_libraries(demo PRIVATE factor_basic factorlib_utils)
 
 | 选项 | 默认 | 说明 |
 |---|---:|---|
-| `FACTORLIB_BUILD_TESTS` | `ON` | 构建单测并运行 `ctest` |
-| `FACTORLIB_USE_THIRD_PARTY` | `ON` | **优先使用** `third_party/` 下的依赖 |
-| `FACTORLIB_ENABLE_TRACE_DEBUG` | `OFF` | 是否**编译进** TRACE/DEBUG 日志（默认不编译，降低体积/开销） |
+| `FACTORLIB_BUILD_TESTS`      | `ON`  | 是否启用测试相关目标的构建总开关 |
+| `FACTORLIB_BUILD_UNIT_TESTS` | `ON`  | 是否构建单元测试可执行文件 `run_tests`（仅在 `FACTORLIB_BUILD_TESTS=ON` 时生效） |
+| `FACTORLIB_WITH_DEMO_E2E`    | `OFF` | 是否构建 E2E 测试 `run_e2e`（依赖 demo_header；仅用于集成验证） |
+| `FACTORLIB_USE_THIRD_PARTY`  | `ON`  | **优先使用** `third_party/` 下的 Eigen / GTest / spdlog 等依赖 |
+| `FACTORLIB_ENABLE_TRACE_DEBUG` | `OFF` | 是否**编译进** TRACE/DEBUG 日志（OFF 时会定义 `FACTORLIB_NO_DEBUG_TRACE=1` 以裁掉相关代码） |
 
 > **日志编译开关说明**
-> - 当 `FACTORLIB_ENABLE_TRACE_DEBUG=OFF`（默认）时：CMake 定义 `FACTORLIB_NO_DEBUG_TRACE=1`，`LOG_TRACE/LOG_DEBUG` 宏**在编译期被裁掉**；若存在 spdlog，建议设置 `SPDLOG_ACTIVE_LEVEL=INFO`。
+> - 当 `FACTORLIB_ENABLE_TRACE_DEBUG=OFF`（默认）时：CMake 定义 `FACTORLIB_NO_DEBUG_TRACE=1`，`LOG_TRACE/LOG_DEBUG` 宏在编译期被裁掉；若存在 spdlog，建议设置 `SPDLOG_ACTIVE_LEVEL=INFO`。
 > - 当 `FACTORLIB_ENABLE_TRACE_DEBUG=ON` 时：不定义裁剪宏，可输出 TRACE/DEBUG 以便调试。
+
 
 ---
 
@@ -432,115 +505,102 @@ target_link_libraries(demo PRIVATE factor_basic factorlib_utils)
 //   - 类名以 *Factor 结尾（如 GaussianCopulaFactor）
 //   - 文件名与类名一致，便于查找与导航
 // 约定 2：接口
-//   - 实现 IFactor 的 on_quote/on_transaction/on_entrust
-//   - 需要在收盘/日切产出时，重写 force_flush
+//   - 至少实现 IFactor 的 on_quote 和 on_tick(CombinedTick)
+//   - 一般不再直接 override on_transaction/on_entrust，
+//     如确需区分成交/委托，建议在公共入口或工具函数中根据 CombinedTick::kind 做一次分流，
+//     尽量避免在每个因子里重复手写 `if (x.kind == ...)`，新的因子实现可直接基于 CombinedTick 字段编写逻辑
+//   - 若需要在收盘/日切产出结果，重写 force_flush
 // 约定 3：按 code 初始化
 //   - 首次见到某个 code 时，创建该 code 的聚合器/窗口等状态
 // 约定 4：Topic 命名
 //   - 推荐 "namespace/name"（如 "zyd/amount"），跨模块统一
 // 约定 5：时间戳
-//   - 发布数据使用“桶结束时间”，方便下游严格对齐
-// 约定 6：健壮性
-//   - 处理 NaN/空窗口/时间倒退等边界条件
+//   - 统一使用 ms 时间戳（int64_t），并尽量以“桶结束时间”作为对齐时间
 // =====================
+```
 
-class MyCustomFactor : public BaseFactor {
+下面给出一个与当前实现风格一致的示例（伪代码，删掉了与业务无关的细节），展示如何基于 `NmsBucketAggregator` 写一个逐笔聚合因子：
+
+```cpp
+class TickAmountFactor : public BaseFactor {
 public:
-  using BaseFactor::BaseFactor; // 复用基类构造（name + codes）
+    struct PerCodeState {
+        NmsBucketAggregator agg;   // 时间桶聚合器
+        // 这里可以再扩展自己的缓存/中间状态
+    };
 
-  // —— 必要：注册输出 Topic ——
-  static void register_topics(size_t capacity = 120) {
-    // 说明：注册一次即可，通常在程序启动处调用
-    DataBus::instance().register_topic<double>("custom/my_factor", capacity);
-  }
+    explicit TickAmountFactor(std::vector<std::string> codes)
+        : BaseFactor("TickAmountFactor", std::move(codes)) {}
 
-  // —— 数据输入：收到一条 L2 行情 ——
-  void on_quote(const QuoteDepth& q) override {
-    ensure_code(q.instrument_id);           // 首次见到该 code 时初始化 per-code 状态
-    auto& s = _state[q.instrument_id];      // 取出该 code 的状态（包含一个聚合器）
+    // —— L2 行情数据 ——（可选）
+    void on_quote(const QuoteDepth& q) override {
+        ensure_code(q.instrument_id);
+        auto& s = _state[q.instrument_id];
 
-    // 1) 先尝试“跨桶产出”：若当前时间已跨过上一个桶，先把上一个桶产出发布
-    BucketOutputs out;
-    if (s.agg.flush_if_crossed(q.data_time_ms, out)) {
-      publish_results(q.instrument_id, out); // 发布结果（见下方函数）
+        // 1) 先尝试“跨桶产出”：若当前时间已跨过上一个桶，先把上一个桶产出发布
+        BucketOutputs out;
+        if (s.agg.flush_if_crossed(q.data_time_ms, out)) {
+            publish_results(q.instrument_id, out); // 发布结果（见下方函数）
+        }
+
+        // 2) 再把本条行情纳入聚合器
+        s.agg.on_quote(q);
     }
 
-    // 2) 再把本条行情纳入聚合器
-    s.agg.on_quote(q);
+    // —— 统一 Tick 入口：收到一条 CombinedTick（成交 or 委托） ——
+    void on_tick(const CombinedTick& x) override {
+        ensure_code(x.instrument_id);
+        auto& s = _state[x.instrument_id];
 
-    // 3) 若需要，也可在此进行“阈值/条件触发”的即时计算
-    double spread = q.ask_price - q.bid_price;   // 价差
-    if (spread > _cfg.threshold) {
-      // TODO：根据策略对该桶的中间态做标记/累计等
+        // 1) 与 on_quote 一样，先按时间检测是否需要产出上一个桶
+        BucketOutputs out;
+        if (s.agg.flush_if_crossed(x.data_time_ms, out)) {
+            publish_results(x.instrument_id, out);
+        }
+
+        // 2) 这里的示例只演示基于 CombinedTick 的增量逻辑：
+        //    可以直接使用 x.price / x.volume / x.data_time_ms 等字段构建自己的状态，
+        //    而不必在每个因子里都手写 `if (x.kind == ...)` 分支。
+        //    实际工程中，可以参考当前 Tick/高斯/格兰杰因子，在公共入口层统一做一次 kind 分流，
+        //    然后再按需调用本因子的 on_tick(CombinedTick)。
     }
-  }
 
-  // —— 数据输入：逐笔成交 ——
-  void on_transaction(const Transaction& t) override {
-    ensure_code(t.instrument_id);
-    _state[t.instrument_id].agg.on_transaction(t);
-  }
 
-  // —— 数据输入：逐笔委托 ——
-  void on_entrust(const Entrust& e) override {
-    ensure_code(e.instrument_id);
-    _state[e.instrument_id].agg.on_entrust(e);
-  }
-
-  // —— 收盘/日切：强制刷新 ——
-  bool force_flush(const std::string& code) override {
-    auto it = _state.find(code);
-    if (it == _state.end()) return false;     // 该 code 从未出现，无需刷新
-    BucketOutputs out;
-    if (it->second.agg.force_flush(out)) {    // 将当前桶强制产出
-      publish_results(code, out);             // 发布结果
-      return true;
+    // —— Bar 回调：如按分钟 Bar 进行补充对齐/收口，可按需实现 ——
+    void on_bar(const Bar& b) override {
+        // 可选：根据 Bar 触发额外逻辑
     }
-    return false;
-  }
+
+    // —— 强制刷新：用于收盘/日切等时刻 —— 
+    bool force_flush(const std::string& code) override {
+        auto it = _state.find(code);
+        if (it == _state.end()) return false;
+
+        BucketOutputs out;
+        if (!it->second.agg.force_flush(out)) {
+            return false;
+        }
+        publish_results(code, out);
+        return true;
+    }
 
 private:
-  // —— 每个 code 的状态 ——
-  struct State {
-    NmsBucketAggregator agg{1000}; // 1 秒桶（示例），可由配置决定
-    // TODO：这里可以加该 code 专属的窗口/统计器等
-  };
+    std::unordered_map<std::string, PerCodeState> _state;
 
-  // —— 因子配置 ——
-  struct Config {
-    int64_t bucket_ms = 1000;   // 桶大小（毫秒）
-    double  threshold = 0.1;    // 示例：价差阈值
-  } _cfg;
-
-  // —— 所有 code → 状态 的映射 ——
-  std::unordered_map<std::string, State> _state;
-
-  // —— 首次见到某个 code 时的延迟初始化 ——
-  void ensure_code(const std::string& code) {
-    if (_state.find(code) == _state.end()) {
-      State s;
-      s.agg = NmsBucketAggregator(_cfg.bucket_ms); // 用配置的桶大小初始化
-      _state.emplace(code, std::move(s));
-      LOG_DEBUG("初始化 code={} 的聚合器", code);
+    void publish_results(const std::string& code, const BucketOutputs& out) {
+        // 在这里把聚合结果写入 DataBus / 日志 / 下游系统
+        // 例如：
+        //   _bus.publish("zyd/amount", code, out.amount);
     }
-  }
-
-  // —— 发布计算结果到 DataBus ——
-  void publish_results(const std::string& code, const BucketOutputs& out) {
-    // 示例：计算一个简单指标（平均成交额 = amount_sum / (volume_sum + eps)）
-    const double eps = 1e-6;
-    double factor_value = out.amount_sum / (out.volume_sum + eps);
-
-    // 使用“桶结束时间”作为时间戳发布（强烈推荐）
-    DataBus::instance().publish<double>("custom/my_factor", code,
-                                        out.bucket_end_ms, factor_value);
-    LOG_INFO("发布 custom/my_factor: code={}, ts={}, value={}", 
-             code, out.bucket_end_ms, factor_value);
-  }
 };
 ```
 
----
+> **建议**：如果要写新的因子，一般可以：
+> 1. 直接从现有的 `TickTransOrders` / `GaussianCopulaFactor` / `GrangerCausalityFactor`
+     >    中拷一份骨架；
+> 2. 替换掉聚合/统计部分逻辑；
+> 3. 保留 `ensure_code` + `force_flush` + DataBus 发布等约定写法。
+
 
 ## ❓ FAQ
 
@@ -664,8 +724,7 @@ public:
     
     // 实现IFactor接口
     void on_quote(const QuoteDepth& q) override;
-    void on_transaction(const Transaction& t) override;
-    void on_entrust(const Entrust& e) override;
+    void on_tick(const CombinedTick& x) override;
     bool force_flush(const std::string& code) override;
 
 private:
@@ -716,14 +775,12 @@ void MyCustomFactor::on_quote(const QuoteDepth& q) {
     }
 }
 
-void MyCustomFactor::on_transaction(const Transaction& t) {
-    ensure_code(t.instrument_id);
-    _aggregators[t.instrument_id].on_transaction(t);
-}
-
-void MyCustomFactor::on_entrust(const Entrust& e) {
-    ensure_code(e.instrument_id);
-    _aggregators[e.instrument_id].on_entrust(e);
+void MyCustomFactor::on_tick(const CombinedTick& x) {
+    ensure_code(x.instrument_id);
+    // 这里仅给出基于 CombinedTick 的示意写法：
+    //  - 可以按需要使用 x.price / x.volume / x.data_time_ms 等字段
+    //  - 如果在公共入口层已经按 kind 拆分并维护了聚合状态，则这里可以专注于“因子本身”的逻辑
+    (void)x;
 }
 
 bool MyCustomFactor::force_flush(const std::string& code) {
