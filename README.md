@@ -24,7 +24,7 @@ factors_lib/
 ├── README.md
 ├── docs/                       # 额外文档与示例说明
 │   ├── demo_wiring.md
-│   └── µû░σó₧σ¢áσ¡Éσ╝ÇσÅæΣ╕ÄµÄÑσàÑµîçσìù.md
+│   └── new_factor_guide.md
 ├── include/                    # 公共头文件
 │   ├── factorlib/bridge/
 │   │   └── ingress.h           # 数据入口桥接接口
