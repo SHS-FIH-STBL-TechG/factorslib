@@ -7,6 +7,8 @@
 #include <type_traits>
 #include <iterator>
 
+#include "utils/log.h"
+
 #if __has_include(<boost/math/distributions/fisher_f.hpp>)
   #include <boost/math/distributions/fisher_f.hpp>
   #define FACTORLIB_HAS_BOOST_MATH 1
@@ -24,9 +26,18 @@ class Distributions {
 public:
     /**
      * @brief 正态分布逆CDF（使用Wichura算法近似）
+     *        - 若 p 非有限或不在 (0,1) 内，返回 0.0 并给出 warning
      */
     static double normal_quantile(double p) {
-        if (p <= 0 || p >= 1) return 0.0;
+        if (!std::isfinite(p)) {
+            LOG_WARN("Distributions::normal_quantile: p is NaN/inf ({}) , return 0.0", p);
+            return 0.0;
+        }
+
+        if (p <= 0.0 || p >= 1.0) {
+            LOG_WARN("Distributions::normal_quantile: p out of range ({}) , return 0.0", p);
+            return 0.0;
+        }
 
         static const double a1 = -3.969683028665376e+01;
         static const double a2 =  2.209460984245205e+02;
@@ -73,75 +84,129 @@ public:
 
     /**
      * @brief 经验逆CDF计算 - 支持任意容器类型
+     *
+     * NaN 视为“缺失值”，在样本中会被跳过：
+     *  - 若存在 NaN，则打印一条 warning；
+     *  - 若全部为 NaN（清洗后无有效样本），返回 0.0。
+     *
+     * 概率 probability：
+     *  - 若非有限或不在 [0,1] 内，返回 0.0 并打印 warning。
      */
     template<typename Container>
     static double empirical_inverse_cdf(const Container& data, double probability) {
         using ValueType = typename Container::value_type;
         static_assert(std::is_arithmetic_v<ValueType>, "Container value type must be arithmetic");
 
-        if (data.empty()) return 0.0;
+        if (data.empty()) {
+            return 0.0;
+        }
+
+        if (!std::isfinite(probability) || probability < 0.0 || probability > 1.0) {
+            LOG_WARN("Distributions::empirical_inverse_cdf: invalid probability {} , return 0.0", probability);
+            return 0.0;
+        }
+
+        // 过滤 NaN，构建清洗后的样本
+        std::vector<double> cleaned;
+        cleaned.reserve(data.size());
+        std::size_t nan_count = 0;
+
+        for (const auto& x : data) {
+            using Decayed = std::decay_t<ValueType>;
+            if constexpr (std::is_floating_point_v<Decayed>) {
+                if (std::isnan(static_cast<double>(x))) {
+                    ++nan_count;
+                    continue;
+                }
+            }
+            cleaned.push_back(static_cast<double>(x));
+        }
+
+        if (nan_count > 0) {
+            LOG_WARN("Distributions::empirical_inverse_cdf: skipped {} NaN values out of {}",
+                     nan_count, data.size());
+        }
+
+        if (cleaned.empty()) {
+            // 全部为 NaN，退化返回 0.0（与其它统计函数的退化行为保持一致）
+            return 0.0;
+        }
 
         // 创建排序副本
-        std::vector<ValueType> sorted_data(data.begin(), data.end());
-        std::sort(sorted_data.begin(), sorted_data.end());
+        std::sort(cleaned.begin(), cleaned.end());
 
         // 计算分位数位置
-        double position = probability * (sorted_data.size() - 1);
-        size_t index = static_cast<size_t>(std::floor(position));
-        double fraction = position - index;
+        const double position = probability * (static_cast<double>(cleaned.size()) - 1.0);
+        const std::size_t index = static_cast<std::size_t>(std::floor(position));
+        const double fraction = position - static_cast<double>(index);
 
         // 线性插值
-        if (index == sorted_data.size() - 1) {
-            return static_cast<double>(sorted_data.back());
+        if (index >= cleaned.size() - 1) {
+            return cleaned.back();
         } else {
-            return static_cast<double>(sorted_data[index]) +
-                   fraction * (static_cast<double>(sorted_data[index + 1]) -
-                              static_cast<double>(sorted_data[index]));
+            const double lower = cleaned[index];
+            const double upper = cleaned[index + 1];
+            return lower + fraction * (upper - lower);
         }
     }
 };
 
-    /**
-     * @brief F 分布右尾概率（Survival Function）：Pr(F_{d1,d2} >= Fobs)
-     *        - 模板化以支持 float/double/long double
-     *        - 优先使用 Boost.Math（header-only），无 Boost 时保守返回 1
-     *
-     * @tparam TFloat 浮点类型（float/double/long double）
-     * @param Fobs    观察到的 F 值（>=0）
-     * @param d1      自由度1（通常是受限与非受限的参数差 q）
-     * @param d2      自由度2（通常是非受限模型的残差自由度 N - p - q - 1）
-     * @return 右尾概率 p ∈ [0,1]；无 Boost 时返回 1（表示“不显著”）
-     */
-    template<typename TFloat>
-    inline TFloat fisher_f_sf(TFloat Fobs, int d1, int d2) {
-        static_assert(std::is_floating_point_v<TFloat>, "TFloat must be floating point");
+/**
+ * @brief F 分布右尾概率（Survival Function）：Pr(F_{d1,d2} >= Fobs)
+ *        - 模板化以支持 float/double/long double
+ *        - 优先使用 Boost.Math（header-only），无 Boost 时保守返回 1
+ *
+ *  NaN 处理：
+ *   - 若 Fobs 非有限（NaN/inf）或 d1/d2 非法，返回 1 并打印 warning。
+ *
+ * @tparam TFloat 浮点类型（float/double/long double）
+ * @param Fobs    观察到的 F 值（>=0）
+ * @param d1      自由度1（通常是受限与非受限的参数差 q）
+ * @param d2      自由度2（通常是非受限模型的残差自由度 N - p - q - 1）
+ * @return 右尾概率 p ∈ [0,1]；无 Boost 时返回 1（表示“不显著”）
+ */
+template<typename TFloat>
+inline TFloat fisher_f_sf(TFloat Fobs, int d1, int d2) {
+    static_assert(std::is_floating_point_v<TFloat>, "TFloat must be floating point");
+
 #if FACTORLIB_HAS_BOOST_MATH
-        if (!(Fobs >= (TFloat)0) || d1 <= 0 || d2 <= 0) return (TFloat)1;
-        try {
-            boost::math::fisher_f dist(d1, d2);
-            // 右尾概率 = cdf_complement(Fobs)
-            TFloat p = boost::math::cdf(boost::math::complement(dist, Fobs));
-            if (p < (TFloat)0) p = (TFloat)0;
-            if (p > (TFloat)1) p = (TFloat)1;
-            return p;
-        } catch (...) {
-            // 任何异常（数值/参数）时返回保守值
-            return (TFloat)1;
-        }
-#else
-        // 无 Boost：保守退化，返回 1（不显著）
-        (void)Fobs; (void)d1; (void)d2;
-        return (TFloat)1;
-#endif
+    if (!std::isfinite(static_cast<double>(Fobs))) {
+        LOG_WARN("Distributions::fisher_f_sf: Fobs is NaN/inf ({}) , return 1", Fobs);
+        return static_cast<TFloat>(1);
+    }
+    if (!(Fobs >= static_cast<TFloat>(0)) || d1 <= 0 || d2 <= 0) {
+        LOG_WARN("Distributions::fisher_f_sf: invalid args Fobs = {}, d1 = {}, d2 = {} , return 1",
+                 Fobs, d1, d2);
+        return static_cast<TFloat>(1);
     }
 
-    /**
-     * @brief 便捷别名：与 fisher_f_sf 相同（可读性更强）
-     */
-    template<typename TFloat>
-    inline TFloat fisher_f_pvalue_right_tail(TFloat Fobs, int d1, int d2) {
-        return fisher_f_sf<TFloat>(Fobs, d1, d2);
+    try {
+        boost::math::fisher_f dist(d1, d2);
+        // 右尾概率 = cdf_complement(Fobs)
+        TFloat p = boost::math::cdf(boost::math::complement(dist, Fobs));
+        if (p < static_cast<TFloat>(0)) p = static_cast<TFloat>(0);
+        if (p > static_cast<TFloat>(1)) p = static_cast<TFloat>(1);
+        return p;
+    } catch (...) {
+        // 任何异常（数值/参数）时返回保守值
+        LOG_WARN("Distributions::fisher_f_sf: exception caught in boost::math, return 1");
+        return static_cast<TFloat>(1);
     }
+#else
+    // 无 Boost：保守退化，返回 1（不显著）
+    (void)Fobs; (void)d1; (void)d2;
+    LOG_WARN("Distributions::fisher_f_sf: Boost.Math not available, return 1");
+    return static_cast<TFloat>(1);
+#endif
+}
+
+/**
+ * @brief 便捷别名：与 fisher_f_sf 相同（可读性更强）
+ */
+template<typename TFloat>
+inline TFloat fisher_f_pvalue_right_tail(TFloat Fobs, int d1, int d2) {
+    return fisher_f_sf<TFloat>(Fobs, d1, d2);
+}
 
 } // namespace math
 } // namespace factorlib
