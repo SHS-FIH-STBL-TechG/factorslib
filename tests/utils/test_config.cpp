@@ -186,8 +186,8 @@ std::vector<factorlib::QuoteDepth> read_quotes_from_cfg() {
 
         // ask_price_1 在第 6 列（索引 5）
         q.ask_price     = std::stod(r[5]);
-        // bid_price_1 在第 38 列（索引 37）
-        q.bid_price     = std::stod(r[37]);
+        // bid_price_1 在第 38 列（索引 35）
+        q.bid_price     = std::stod(r[35]);
 
         // 其余深度档、成交统计等你后面如果需要，可以在 QuoteDepth 结构里扩字段，
         // 再从 r[...] 中填充。

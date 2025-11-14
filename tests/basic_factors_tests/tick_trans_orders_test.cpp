@@ -19,6 +19,7 @@
 #include "basic_factors/tick_trans_orders.h"
 #include "utils/databus.h"
 #include "utils/types.h"
+#include "../utils/test_config.h"
 
 using namespace factorlib;
 
@@ -213,4 +214,60 @@ TEST_F(TickTransOrdersFixture, BucketAggregation_BasicFunctionality)
     EXPECT_EQ(volumes[1].first, ms_of(9,30,1,0));
     EXPECT_EQ(volumes[1].second, 800);            // 相对于第一个tick的增量 (500+300)
     EXPECT_DOUBLE_EQ(midprices[1].second, 10.03); // 最后一个tick的中价 (10.02+10.04)/2
+}
+
+// ============== 用例：CSV 驱动桶聚合冒烟测试 ==============
+TEST_F(TickTransOrdersFixture, BucketAggregation_CsvFeed_Smoke) {
+    auto& bus = DataBus::instance();
+
+    auto quotes = testcfg::read_quotes_from_cfg();
+    auto trans  = testcfg::read_transactions_from_cfg();
+
+    if (quotes.empty() || trans.empty()) {
+        GTEST_SKIP() << "quotes_csv / transactions_csv 未配置或为空";
+    }
+
+    size_t n = std::min(quotes.size(), trans.size());
+    ASSERT_GE(n, 5u);
+
+    for (size_t i = 0; i < n; ++i) {
+        auto q = quotes[i];
+        q.instrument_id = code;
+        factor->on_quote(q);
+
+        auto t = trans[i];
+        t.instrument_id = code;
+        factor->on_tick(t);   // Transaction
+
+        Entrust e{};
+        e.instrument_id = code;
+        e.data_time_ms  = t.data_time_ms;
+        e.main_seq      = t.main_seq;
+        e.price         = t.price;
+        e.side          = t.side;
+        e.volume        = t.volume;
+        e.order_id      = t.main_seq;
+
+        factor->on_tick(e);   // Entrust
+    }
+
+    // 检查桶级产出是否存在
+    auto amount = bus.get_last_n<double>(TOP_AMOUNT, code, 10);
+    auto volume = bus.get_last_n<int64_t>(TOP_VOLUME, code, 10);
+    auto mid    = bus.get_last_n<double>(TOP_MID, code, 10);
+    auto ttrans = bus.get_last_n<std::vector<Transaction>>(TOP_TTRANS, code, 10);
+    auto tord   = bus.get_last_n<std::vector<Entrust>>(TOP_TORD, code, 10);
+
+    ASSERT_FALSE(amount.empty()) << "CSV 喂数后应有金额聚合产出";
+    ASSERT_FALSE(volume.empty()) << "CSV 喂数后应有成交量聚合产出";
+    ASSERT_FALSE(mid.empty())    << "CSV 喂数后应有中间价聚合产出";
+    ASSERT_FALSE(ttrans.empty()) << "CSV 喂数后应有逐笔成交聚合产出";
+
+    // interval 两个主题在 fixture 配置中 emit_tick_interval=true
+    auto ivt = bus.get_last_n<std::vector<Transaction>>(TOP_INTERVAL_TRANS, code, 10);
+    auto ivo = bus.get_last_n<std::vector<Entrust>>(TOP_INTERVAL_ORDERS, code, 10);
+
+    // 因为我们喂了多条 quote/tick，至少应有一条 interval 切片
+    EXPECT_FALSE(ivt.empty());
+    EXPECT_FALSE(ivo.empty());
 }

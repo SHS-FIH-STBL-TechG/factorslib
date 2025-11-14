@@ -4,7 +4,7 @@
 #include "../../src/stat_factors/gaussian_copula_factor.h"
 #include "utils/databus.h"
 #include "utils/types.h"
-
+#include "../utils/test_config.h"
 using namespace factorlib;
 
 namespace {
@@ -242,5 +242,57 @@ protected:
     // 验证性能要求：处理1000次迭代应该在合理时间内完成
     EXPECT_LT(duration.count(), 1000) << "增量计算性能应该优于1000ms";
     }
+
+#include "../utils/test_config.h"
+
+    // ...
+
+    TEST_F(GaussianCopulaFactorTest, CsvFeed_Smoke) {
+        auto& bus = DataBus::instance();
+
+        // 👇 统一从 test_config 读三张表之一，而不是直接用 read_csv("xxx.csv")
+        auto quotes = testcfg::read_quotes_from_cfg();
+        auto trans  = testcfg::read_transactions_from_cfg();
+
+        if (quotes.empty() || trans.empty()) {
+            GTEST_SKIP() << "quotes_csv / transactions_csv 未配置或为空，跳过 CsvFeed_Smoke";
+        }
+
+        const std::string code = test_code;
+
+        // 统一 instrument_id
+        for (auto& q : quotes) q.instrument_id = code;
+        for (auto& t : trans) t.instrument_id = code;
+
+        size_t n = std::min(quotes.size(), trans.size());
+        ASSERT_GE(n, 10u);
+
+        for (size_t i = 0; i < n; ++i) {
+            // 行情：直接用 read_quotes_from_cfg 给的 QuoteDepth
+            factor->on_quote(quotes[i]);
+
+            // 订单流：先用 Transaction 喂一遍
+            factor->on_tick(trans[i]);
+
+            // 如需要 Entrust，再从 Transaction 转一次就行，不需要单独 CSV：
+            Entrust e{};
+            e.instrument_id = code;
+            e.data_time_ms  = trans[i].data_time_ms;
+            e.price         = trans[i].price;
+            e.side          = trans[i].side;
+            e.volume        = trans[i].volume;
+            e.main_seq      = trans[i].main_seq;
+            e.order_id      = trans[i].main_seq;
+
+            factor->on_tick(e);
+        }
+
+        auto preds = bus.get_last_n<double>(TOP_PREDICTION, code, 100);
+        ASSERT_FALSE(preds.empty());
+        double last = preds.back().second;
+        EXPECT_FALSE(std::isnan(last));
+        EXPECT_FALSE(std::isinf(last));
+    }
+
 
 } // namespace
