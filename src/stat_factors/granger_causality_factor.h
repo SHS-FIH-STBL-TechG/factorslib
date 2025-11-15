@@ -18,8 +18,8 @@
 #include "utils/databus.h"                    // DataBus / safe_publish
 #include "utils/nms_bucket_aggregator.h"      // NmsBucketAggregator
 #include "utils/config/feed_mode.h"           // FeedMode 全局默认
-#include "utils/math/sliding_normal_eq.h"     // 增量法方程
-#include "utils/math/distributions.h"         // fisher_f_sf<T>()
+#include "math/sliding_normal_eq.h"     // 增量法方程
+#include "math/distributions.h"         // fisher_f_sf<T>()
 
 namespace factorlib {
 

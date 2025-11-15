@@ -1,5 +1,5 @@
 // src/bridge/ingress.cpp
-#include "factorlib/bridge/ingress.h"
+#include "bridge/ingress.h"
 #include "utils/data_adapter.h"
 #include "ifactor.h"
 #include "utils/types.h"

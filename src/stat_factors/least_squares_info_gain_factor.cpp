@@ -7,7 +7,7 @@
 
 #include "utils/databus.h"
 #include "utils/log.h"
-#include "utils/math/distributions.h"
+#include "math/distributions.h"
 #include "../config/runtime_config.h"
 
 using factorlib::config::RC;

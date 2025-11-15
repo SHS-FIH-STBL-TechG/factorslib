@@ -6,10 +6,10 @@
 #include "utils/log.h"
 #include "utils/trading_time.h"
 #include "../config/runtime_config.h"
-#include "utils/math/distributions.h"
-#include "utils/math/incremental_rank.h"
-#include "utils/math/linear_algebra.h"
-#include "utils/math/statistics.h"
+#include "math/distributions.h"
+#include "math/incremental_rank.h"
+#include "math/linear_algebra.h"
+#include "math/statistics.h"
 
 using factorlib::config::RC;
 namespace factorlib {

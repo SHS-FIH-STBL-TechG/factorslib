@@ -12,8 +12,8 @@
 
 #include "ifactor.h"
 #include "utils/types.h"
-#include "utils/math/sliding_normal_eq.h"
-#include "utils/math/sliding_statistics.h"
+#include "math/sliding_normal_eq.h"
+#include "math/sliding_statistics.h"
 
 namespace factorlib {
 

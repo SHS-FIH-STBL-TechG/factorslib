@@ -12,7 +12,7 @@
 #include "utils/types.h"
 #include "utils/databus.h"
 #include "utils/log.h"
-#include "utils/math/incremental_rank.h"
+#include "math/incremental_rank.h"
 
 /**
  * @file gaussian_copula_factor.h

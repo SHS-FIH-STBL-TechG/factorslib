@@ -83,6 +83,25 @@ public:
     }
 
     /**
+     * @brief 标准正态分布 CDF：Φ(z) = P(Z <= z), Z ~ N(0,1)
+     * @tparam T 浮点类型，如 float/double/long double
+     */
+    template<typename T>
+    static T normal_cdf(T z) {
+        static_assert(std::is_floating_point_v<T>,
+                      "Distributions::normal_cdf requires floating point type");
+
+        double zd = static_cast<double>(z);
+        if (!std::isfinite(zd)) {
+            LOG_WARN("Distributions::normal_cdf: z is NaN/inf ({}) , return 0.5", zd);
+            return static_cast<T>(0.5);
+        }
+
+        double F = 0.5 * std::erfc(-zd / std::sqrt(2.0));
+        return static_cast<T>(F);
+    }
+
+    /**
      * @brief 经验逆CDF计算 - 支持任意容器类型
      *
      * NaN 视为“缺失值”，在样本中会被跳过：

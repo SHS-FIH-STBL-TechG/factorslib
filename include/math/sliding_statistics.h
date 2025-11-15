@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <limits>
 #include <cmath>
+#include <utility>
 
 namespace factorlib { namespace math {
 
@@ -106,5 +107,95 @@ private:
     long double sum_{0};
     long double sumsq_{0};
 };
+
+    // ===================== 加权滑动统计（value, weight） =====================
+
+template<typename T, typename W = double>
+class WeightedSlidingWindowStats {
+    static_assert(std::is_arithmetic_v<T>, "T must be arithmetic");
+    static_assert(std::is_arithmetic_v<W>, "W must be arithmetic");
+
+public:
+    WeightedSlidingWindowStats() = default;
+
+    explicit WeightedSlidingWindowStats(std::size_t max_size) {
+        reset(max_size);
+    }
+
+    /// 重置窗口大小并清空历史
+    void reset(std::size_t max_size) {
+        max_size_ = max_size;
+        values_.clear();
+        weights_.clear();
+        sum_w_   = 0.0L;
+        sum_wr_  = 0.0L;
+        sum_wr2_ = 0.0L;
+    }
+
+    /// 推入一个新样本 (value, weight)
+    void push(T value, W weight) {
+        if (!(weight > static_cast<W>(0))) return;
+        if (max_size_ == 0) return;
+
+        values_.push_back(value);
+        weights_.push_back(weight);
+
+        const long double v = static_cast<long double>(value);
+        const long double w = static_cast<long double>(weight);
+
+        sum_w_   += w;
+        sum_wr_  += w * v;
+        sum_wr2_ += w * v * v;
+
+        // 控制窗口长度
+        while (values_.size() > max_size_) {
+            T v_old = values_.front(); values_.pop_front();
+            W w_old = weights_.front(); weights_.pop_front();
+
+            const long double v0 = static_cast<long double>(v_old);
+            const long double w0 = static_cast<long double>(w_old);
+
+            sum_w_   -= w0;
+            sum_wr_  -= w0 * v0;
+            sum_wr2_ -= w0 * v0 * v0;
+        }
+
+        if (sum_w_ < 0.0L) sum_w_ = 0.0L;
+    }
+
+    std::size_t size() const { return values_.size(); }
+
+    double sum_w() const {
+        return static_cast<double>(sum_w_);
+    }
+
+    /// 计算加权均值和标准差；成功返回 true，失败返回 false（样本不足）
+    bool mean_var(double& mu, double& sigma) const {
+        if (values_.size() < 2 || !(sum_w_ > 0.0L)) {
+            mu    = 0.0;
+            sigma = 0.0;
+            return false;
+        }
+
+        const long double w  = sum_w_;
+        const long double m1 = sum_wr_  / w;
+        const long double m2 = sum_wr2_ / w;
+        long double var = m2 - m1 * m1;
+        if (var < 0.0L) var = 0.0L;
+
+        mu    = static_cast<double>(m1);
+        sigma = std::sqrt(static_cast<double>(var));
+        return true;
+    }
+
+private:
+    std::size_t max_size_{0};
+    std::deque<T> values_;
+    std::deque<W> weights_;
+    long double sum_w_{0.0L};
+    long double sum_wr_{0.0L};
+    long double sum_wr2_{0.0L};
+};
+
 
 }} // namespace factorlib::math
