@@ -15,6 +15,8 @@
 #include <cassert>
 #include <Eigen/Dense>
 
+#include "utils/log.h"
+
 namespace factorlib { namespace math {
 
 template<typename T>
@@ -36,6 +38,13 @@ public:
     /// 追加一条样本；若超过窗口则弹出最旧
     void push(const Row& x, Scalar y) {
         assert(x.size() == d_);
+
+        // 统一检查：x 或 y 中包含 NaN/Inf，则丢弃并记日志
+        if (!x.allFinite() || !std::isfinite(static_cast<double>(y))) {
+            LOG_WARN("SlidingNormalEq::push: sample has NaN/Inf, drop");
+            return;
+        }
+
         // 累计仅作参考，不再用它来求解（稳定性更好）
         XtX_.noalias() += (x * x.transpose());
         Xty_.noalias() += (x * y);

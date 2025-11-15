@@ -193,7 +193,7 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/math_tests/linear_algebra_test.cpp
             tests/math_tests/numeric_utils_test.cpp
             tests/math_tests/sliding_normal_eq_test.cpp
-            "tests/math_tests/ sliding_statistics_test.cpp .cpp"
+            "tests/math_tests/ sliding_statistics_test.cpp"
             tests/math_tests/statistics_test.cpp
     )
     target_link_libraries(math_tests PRIVATE factorlib_utils gtest gtest_main)

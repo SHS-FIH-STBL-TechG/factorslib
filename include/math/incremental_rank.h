@@ -8,13 +8,16 @@
 #include <vector>
 #include <Eigen/Dense>
 
+#include "utils/log.h"
+#include "math/bad_value_policy.h"
+
 namespace factorlib {
 namespace math {
 
 /**
  * @brief 增量秩计算器 - 使用平衡二叉搜索树维护排序，实现 O(log n) 的插入和删除
  */
-template<typename T>
+template<typename T, typename BadValuePolicy = SkipNaNInfPolicy>
 class IncrementalRankCalculator {
     static_assert(std::is_arithmetic_v<T>, "T must be an arithmetic type");
 
@@ -25,6 +28,11 @@ private:
 public:
     /// 添加新数据点（自动维护窗口大小）
     void push(T value, size_t window_size) {
+        // 统一入口：NaN/Inf 先按策略处理
+        if (!BadValuePolicy::handle(value, "IncrementalRankCalculator::push")) {
+            return;  // 丢弃这一条
+        }
+
         _sorted_data.insert(value);
         _window_data.push_back(value);
 
@@ -99,6 +107,12 @@ public:
     /// 添加新的多变量数据点
     void push(const Eigen::Matrix<T, Dimension, 1>& value) {
         Eigen::Matrix<double, Dimension, 1> double_value = value.template cast<double>();
+
+        // 统一检查：如果样本中有 NaN/Inf，直接丢弃并记日志
+        if (!double_value.allFinite()) {
+            LOG_WARN("IncrementalCovariance::push: sample has NaN/Inf, drop");
+            return;
+        }
 
         _data.push_back(value);
         _sum += double_value;

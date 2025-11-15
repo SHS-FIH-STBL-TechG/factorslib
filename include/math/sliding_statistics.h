@@ -11,9 +11,13 @@
 #include <cmath>
 #include <utility>
 
-namespace factorlib { namespace math {
+#include "utils/log.h"
+#include "math/bad_value_policy.h"
 
-template<typename T>
+namespace factorlib {
+namespace math {
+
+template<typename T, typename BadValuePolicy = SkipNaNInfPolicy>
 class SlidingWindowStats {
     static_assert(std::is_arithmetic_v<T>, "T must be arithmetic");
 
@@ -45,6 +49,12 @@ public:
 
     /// 追加一条样本；超过窗口时自动弹出最旧的一条
     void push(T v) {
+        // 统一入口：先按策略处理 NaN/Inf 等异常值
+        if (!BadValuePolicy::handle(v, "SlidingWindowStats::push")) {
+            // 策略要求丢弃该样本
+            return;
+        }
+
         if (max_size_ == 0) {
             // 兜底：0 视为“无限窗口”，只累积不丢弃
             window_.push_back(v);
@@ -110,7 +120,7 @@ private:
 
     // ===================== 加权滑动统计（value, weight） =====================
 
-template<typename T, typename W = double>
+template<typename T, typename W = double, typename BadValuePolicy = SkipNaNInfPolicy>
 class WeightedSlidingWindowStats {
     static_assert(std::is_arithmetic_v<T>, "T must be arithmetic");
     static_assert(std::is_arithmetic_v<W>, "W must be arithmetic");
@@ -134,7 +144,17 @@ public:
 
     /// 推入一个新样本 (value, weight)
     void push(T value, W weight) {
-        if (!(weight > static_cast<W>(0))) return;
+        // 1) 先按策略处理 value（可能会被置零或被丢弃）
+        if (!BadValuePolicy::handle(value, "WeightedSlidingWindowStats::push")) {
+            return;  // 丢弃这一条样本
+        }
+
+        // 2) 检查权重是否合法：必须是有限值且 > 0
+        if (!is_finite_numeric(weight) || !(weight > static_cast<W>(0))) {
+            LOG_WARN("WeightedSlidingWindowStats::push: invalid weight {}, drop sample", weight);
+            return;
+        }
+
         if (max_size_ == 0) return;
 
         values_.push_back(value);
