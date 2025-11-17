@@ -17,7 +17,7 @@
 namespace factorlib {
 namespace math {
 
-template<typename T, typename BadValuePolicy = SkipNaNInfPolicy>
+template<typename T, typename BadValuePolicy = NoCheckBadValuePolicy>
 class SlidingWindowStats {
     static_assert(std::is_arithmetic_v<T>, "T must be arithmetic");
 

@@ -17,7 +17,7 @@ namespace math {
 /**
  * @brief 增量秩计算器 - 使用平衡二叉搜索树维护排序，实现 O(log n) 的插入和删除
  */
-template<typename T, typename BadValuePolicy = SkipNaNInfPolicy>
+template<typename T, typename BadValuePolicy = NoCheckBadValuePolicy>
 class IncrementalRankCalculator {
     static_assert(std::is_arithmetic_v<T>, "T must be an arithmetic type");
 

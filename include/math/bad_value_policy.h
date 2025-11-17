@@ -51,5 +51,13 @@ namespace factorlib {
             }
         };
 
+        /// 策略 0：不做任何 NaN / Inf 检查与处理，直接放行
+        struct NoCheckBadValuePolicy {
+            template<typename T>
+            static bool handle(T&, const char*) {
+                // 什么都不做，直接让调用方继续处理这个值（包括 NaN / Inf）
+                return true;
+            }
+        };
     } // namespace math
 } // namespace factorlib
