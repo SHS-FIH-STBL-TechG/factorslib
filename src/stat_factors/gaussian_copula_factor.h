@@ -27,7 +27,6 @@ namespace factorlib {
 struct GaussianCopulaConfig {
     int window_size = 30;           ///< 滑动窗口大小
     double regularization = 1e-6;   ///< 协方差矩阵正则化参数
-    bool debug_mode = false;        ///< 是否输出调试信息
 };
 
 /**

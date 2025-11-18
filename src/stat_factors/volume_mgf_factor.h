@@ -34,7 +34,6 @@ namespace factorlib {
 struct VolumeMGFConfig {
     int   window_size = 256;   ///< 滑窗长度
     double t          = 0.01;  ///< MGF 评估点 t，t>0 越大越关注大体量
-    bool  debug_mode  = false;
 };
 
 // =====================[ 主题名 ]=====================

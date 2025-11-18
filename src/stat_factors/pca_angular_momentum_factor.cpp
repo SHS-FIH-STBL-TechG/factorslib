@@ -1,92 +1,163 @@
 #include "pca_angular_momentum_factor.h"
+
 #include <algorithm>
+#include <limits>
+
+#include "../config/runtime_config.h"
 
 using factorlib::config::RC;
 
 namespace factorlib {
 
-PCAAngularMomentumFactor::PCAAngularMomentumFactor(const std::vector<std::string>& codes,
-                                                   const PCAAngMomCfg& cfg)
-    : BaseFactor("PCAAngularMomentum", codes), _cfg(cfg) {
-    _cfg.dims = RC().geti("pca_ang.dims", _cfg.dims);
-    _cfg.k    = RC().geti("pca_ang.k",    _cfg.k);
-    _cfg.lr   = RC().getd("pca_ang.lr",   _cfg.lr);
-    _cfg.debug_mode = RC().getb("pca_ang.debug_mode", _cfg.debug_mode);
+// =====================[ CodeState 实现 ]=====================
+
+PcaAngularMomentumFactor::CodeState::CodeState(const PcaAngularMomentumConfig& cfg)
+    : pca(cfg.dims, std::max(2, cfg.k), cfg.lr)
+    , has_last_close(false)
+    , last_close(0.0)
+    , last_proj_valid(false)
+    , last_u(0.0)
+    , last_v(0.0)
+    , n_samples(0) {}
+
+// =====================[ 构造 & 配置 ]=====================
+
+PcaAngularMomentumFactor::PcaAngularMomentumFactor(
+        const std::vector<std::string>& codes,
+        const PcaAngularMomentumConfig& cfg)
+    : BaseFactor("PcaAngularMomentumFactor", codes)
+    , _cfg(cfg) {
+
+    _cfg.dims       = RC().geti("pca_ang.dims",       _cfg.dims);
+    _cfg.k          = RC().geti("pca_ang.k",          _cfg.k);
+    _cfg.warmup     = RC().geti("pca_ang.warmup",     _cfg.warmup);
+    _cfg.lr         = RC().getd("pca_ang.lr",         _cfg.lr);
+
+    if (_cfg.dims <= 0) _cfg.dims = 3;
+    if (_cfg.k < 2) _cfg.k = 2;
+    if (_cfg.k > _cfg.dims) _cfg.k = std::min(2, _cfg.dims);
+    if (_cfg.lr <= 0.0) _cfg.lr = 0.05;
+    if (_cfg.warmup < 8) _cfg.warmup = 8;
 }
 
-void PCAAngularMomentumFactor::ensure_state(const std::string& code) {
-    if (_states.find(code)!=_states.end()) return;
-    CodeState st;
-    st.pca = math::OnlinePCA(_cfg.dims, std::max(1,_cfg.k), _cfg.lr);
-    st.last_mean.assign(_cfg.dims, 0.0);
-    _states.emplace(code, std::move(st));
+// =====================[ topic 注册 ]=====================
+
+void PcaAngularMomentumFactor::register_topics(std::size_t capacity) {
+    auto& bus = DataBus::instance();
+    bus.register_topic<double>(TOP_PCA_ANG, capacity);
 }
 
-void PCAAngularMomentumFactor::feed_vec(const std::string& code, int64_t ts, const std::vector<double>& x) {
-    (void)ts;
+// =====================[ state 管理 ]=====================
+
+void PcaAngularMomentumFactor::ensure_state(const std::string& code) {
+    if (_states.find(code) != _states.end()) return;
+    _states.emplace(code, CodeState(_cfg));
+}
+
+void PcaAngularMomentumFactor::on_code_added(const std::string& code) {
     ensure_state(code);
-    auto& s = _states[code];
-    s.pca.push(x);
-    maybe_publish(code, ts);
 }
 
-static inline double norm3(const std::vector<double>& a){
-    double s=0; for (size_t i=0;i<a.size();++i) s+=a[i]*a[i]; return std::sqrt(s);
-}
-static inline std::vector<double> cross3(const std::vector<double>& a, const std::vector<double>& b){
-    std::vector<double> c(3,0.0);
-    if (a.size()>=3 && b.size()>=3) {
-        c[0] = a[1]*b[2] - a[2]*b[1];
-        c[1] = a[2]*b[0] - a[0]*b[2];
-        c[2] = a[0]*b[1] - a[1]*b[0];
+// =====================[ 特征构造 ]=====================
+
+std::vector<double> PcaAngularMomentumFactor::make_features(const Bar& b,
+                                                            double ret) const {
+    std::vector<double> x(static_cast<std::size_t>(_cfg.dims), 0.0);
+    const double vol = static_cast<double>(b.volume);
+    double vwap = b.close;
+    if (vol > 0.0 && b.turnover > 0.0) {
+        vwap = b.turnover / vol;
     }
-    return c;
+
+    if (_cfg.dims >= 1) x[0] = ret;
+    if (_cfg.dims >= 2) x[1] = std::log(vol + 1.0);
+    if (_cfg.dims >= 3) x[2] = std::log(vwap > 0.0 ? vwap : b.close);
+
+    return x;
 }
 
-void PCAAngularMomentumFactor::maybe_publish(const std::string& code, int64_t ts) {
-    auto& s = _states[code];
-    if (s.pca.n_samples() < 4) return;
-    const auto& mean = s.pca.mean();
-    std::vector<double> v(mean.size(), 0.0);
-    for (size_t i=0;i<v.size();++i) v[i] = mean[i] - s.last_mean[i];
-    s.last_mean = mean;
-    // 第一主成分的“质量” ≈ 解释方差
-    double m = 0.0;
-    if (!s.pca.explained_variance().empty()) m = s.pca.explained_variance()[0];
-    auto Lvec = cross3(mean, v);
-    double L = m * norm3(Lvec);
-    if (std::isfinite(L)) {
-        safe_publish<double>(TOP_PCA_L, code, ts, L);
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("PCAAngMom[{}]: m={:.4f}, |r×v|={:.4f}, L={:.6f}", code, m, norm3(Lvec), L);
-        }
+// =====================[ 核心逻辑 ]=====================
+
+void PcaAngularMomentumFactor::on_price_event(const std::string& code,
+                                              int64_t ts_ms,
+                                              const Bar& b) {
+    if (!(b.close > 0.0)) return;
+
+    ensure_state(code);
+    auto& st = _states.at(code);
+
+    double close = b.close;
+    if (!st.has_last_close) {
+        st.last_close = close;
+        st.has_last_close = true;
+        return;
     }
+
+    double ret = 0.0;
+    double ratio = close / st.last_close;
+    if (ratio > 0.0) {
+        ret = std::log(ratio);
+    }
+    st.last_close = close;
+
+    if (!std::isfinite(ret)) return;
+
+    auto x = make_features(b, ret);
+
+    if (!st.pca.push(x)) {
+        LOG_DEBUG("PcaAngularMomentumFactor: push failed, code={}", code);
+        return;
+    }
+
+    ++st.n_samples;
+    if (st.n_samples < _cfg.warmup) return;
+
+    maybe_publish(code, st, ts_ms, x);
 }
 
-void PCAAngularMomentumFactor::on_quote(const QuoteDepth& q) {
-    ensure_state(q.instrument_id);
-    auto& s = _states[q.instrument_id];
-    double mid = (q.bid_price + q.ask_price)/2.0;
-    if (s.has_last_price && s.last_price>0.0) {
-        double ret = std::log(mid / s.last_price);
-        feed_vec(q.instrument_id, q.data_time_ms, {ret, 0.0, 0.0});
+void PcaAngularMomentumFactor::maybe_publish(const std::string& code,
+                                             CodeState& st,
+                                             int64_t ts_ms,
+                                             const std::vector<double>& x) {
+    const auto& comps = st.pca.components();
+    if (comps.size() < 2) return; // 需要至少 2 个主成分
+
+    const auto& pc1 = comps[0];
+    const auto& pc2 = comps[1];
+
+    if (pc1.size() != x.size() || pc2.size() != x.size()) {
+        return;
     }
-    s.last_price = mid; s.has_last_price = true;
+
+    double u = 0.0, v = 0.0;
+    for (std::size_t i = 0; i < x.size(); ++i) {
+        u += x[i] * pc1[i];
+        v += x[i] * pc2[i];
+    }
+
+    if (!st.last_proj_valid) {
+        st.last_u = u;
+        st.last_v = v;
+        st.last_proj_valid = true;
+        return;
+    }
+
+    // 2D 叉积模长：| (u_{t-1}, v_{t-1}) x (u_t, v_t) |
+    double L = std::fabs(st.last_u * v - st.last_v * u);
+
+    st.last_u = u;
+    st.last_v = v;
+    st.last_proj_valid = true;
+
+    LOG_DEBUG("PcaAngularMomentumFactor: code={} ts={} L={}", code, ts_ms, L);
+
+    safe_publish<double>(TOP_PCA_ANG, code, ts_ms, L);
 }
 
-void PCAAngularMomentumFactor::on_tick(const CombinedTick& x) {
-    ensure_state(x.instrument_id);
-    auto& s = _states[x.instrument_id];
-    if (x.kind==CombinedKind::Trade) {
-        double ofi = (x.side>0 ? 1.0 : -1.0) * static_cast<double>(x.volume);
-        if (s.has_last_price && s.last_price>0.0) {
-            double ret = std::log(x.price / s.last_price);
-            feed_vec(x.instrument_id, x.data_time_ms, {ret, static_cast<double>(x.volume), ofi});
-            s.last_price = x.price; 
-            return;
-        }
-        s.last_price = x.price; s.has_last_price = true;
-    }
+// =====================[ IFactor 接口 ]=====================
+
+void PcaAngularMomentumFactor::on_bar(const Bar& b) {
+    on_price_event(b.instrument_id, b.data_time_ms, b);
 }
 
 } // namespace factorlib

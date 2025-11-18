@@ -26,9 +26,6 @@ LeastSquaresInfoGainFactor::LeastSquaresInfoGainFactor(
         ws = 30;
     }
     _cfg.window_size = ws;
-
-    bool dbg = RC().getb("lsig.debug_mode", _cfg.debug_mode);
-    _cfg.debug_mode = dbg;
 }
 
 void LeastSquaresInfoGainFactor::register_topics(size_t capacity) {
@@ -173,9 +170,7 @@ void LeastSquaresInfoGainFactor::push_sample_and_update(
     double RSS = 0.0;
     const bool ok = S.ols->solve(beta, RSS);
     if (!ok) {
-        if (_cfg.debug_mode) {
-            LOG_WARN("LeastSquaresInfoGainFactor: solve 失败 code={}, n={}", code, n);
-        }
+        LOG_WARN("LeastSquaresInfoGainFactor: solve 失败 code={}, n={}", code, n);
         return;
     }
 
@@ -204,10 +199,8 @@ void LeastSquaresInfoGainFactor::push_sample_and_update(
     const double ig_lo = ig - z975 * se;
     const double ig_hi = ig + z975 * se;
 
-    if (_cfg.debug_mode) {
-        LOG_DEBUG("LeastSquaresInfoGainFactor: code={} ts={} n={} s0^2={} s1^2={} R={} ig={} lo={} hi={}",
-                  code, ts_ms, n, s0_sq, s1_sq, R, ig, ig_lo, ig_hi);
-    }
+    LOG_DEBUG("LeastSquaresInfoGainFactor: code={} ts={} n={} s0^2={} s1^2={} R={} ig={} lo={} hi={}",
+              code, ts_ms, n, s0_sq, s1_sq, R, ig, ig_lo, ig_hi);
 
     publish_all(code, ts_ms, ig, ig_lo, ig_hi);
 }

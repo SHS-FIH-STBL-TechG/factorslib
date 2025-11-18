@@ -23,7 +23,6 @@ struct ProbMomentumConfig {
     double min_sigma        = 1e-6;  ///< 标准差下限，防止除零
     double buy_threshold    = 0.7;   ///< 买入信号阈值：F >= buy_threshold
     double sell_threshold   = 0.3;   ///< 卖出信号阈值：F <= sell_threshold
-    bool   debug_mode       = false; ///< 调试日志开关
 };
 
 // =====================[ 主题名 ]=====================

@@ -25,7 +25,6 @@ namespace factorlib {
 struct SymbolicCfg {
     int    window_size = 256;
     int    symbols_k   = 6;
-    bool   debug_mode  = false;
 };
 
 inline constexpr const char* TOP_SYMBOLIC_EIG1 = "time/symbolic_eig1";

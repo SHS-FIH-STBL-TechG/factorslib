@@ -1,95 +1,170 @@
 #include "pca_structure_stability_factor.h"
+
 #include <algorithm>
+#include <limits>
+
+#include "../config/runtime_config.h"
 
 using factorlib::config::RC;
 
 namespace factorlib {
 
-PCAStructureStabilityFactor::PCAStructureStabilityFactor(const std::vector<std::string>& codes,
-                                                         const PCAStabilityCfg& cfg)
-    : BaseFactor("PCAStability", codes), _cfg(cfg) {
-    _cfg.dims = RC().geti("pca_stab.dims", _cfg.dims);
-    _cfg.k    = RC().geti("pca_stab.k",    _cfg.k);
-    _cfg.lr   = RC().getd("pca_stab.lr",   _cfg.lr);
-    _cfg.debug_mode = RC().getb("pca_stab.debug_mode", _cfg.debug_mode);
+// =====================[ CodeState 实现 ]=====================
+
+PcaStructureStabilityFactor::CodeState::CodeState(const PcaStructureStabilityConfig& cfg)
+    : pca(cfg.dims, cfg.k, cfg.lr)
+    , has_last_close(false)
+    , last_close(0.0)
+    , last_pc1_valid(false)
+    , last_pc1(static_cast<std::size_t>(cfg.dims), 0.0)
+    , n_samples(0) {}
+
+// =====================[ 构造 & 配置 ]=====================
+
+PcaStructureStabilityFactor::PcaStructureStabilityFactor(
+        const std::vector<std::string>& codes,
+        const PcaStructureStabilityConfig& cfg)
+    : BaseFactor("PcaStructureStabilityFactor", codes)
+    , _cfg(cfg) {
+
+    _cfg.dims       = RC().geti("pca_stab.dims",       _cfg.dims);
+    _cfg.k          = RC().geti("pca_stab.k",          _cfg.k);
+    _cfg.warmup     = RC().geti("pca_stab.warmup",     _cfg.warmup);
+    _cfg.lr         = RC().getd("pca_stab.lr",         _cfg.lr);
+
+    if (_cfg.dims <= 0) _cfg.dims = 3;
+    if (_cfg.k <= 0 || _cfg.k > _cfg.dims) _cfg.k = 1;
+    if (_cfg.lr <= 0.0) _cfg.lr = 0.05;
+    if (_cfg.warmup < 8) _cfg.warmup = 8;
 }
 
-void PCAStructureStabilityFactor::ensure_state(const std::string& code) {
-    if (_states.find(code)!=_states.end()) return;
-    CodeState st;
-    st.pca = math::OnlinePCA(_cfg.dims, std::max(1,_cfg.k), _cfg.lr);
-    _states.emplace(code, std::move(st));
+// =====================[ topic 注册 ]=====================
+
+void PcaStructureStabilityFactor::register_topics(std::size_t capacity) {
+    auto& bus = DataBus::instance();
+    bus.register_topic<double>(TOP_PCA_STAB, capacity);
 }
 
-void PCAStructureStabilityFactor::feed_vec(const std::string& code, int64_t ts, const std::vector<double>& x) {
-    (void)ts;
+// =====================[ state 管理 ]=====================
+
+void PcaStructureStabilityFactor::ensure_state(const std::string& code) {
+    if (_states.find(code) != _states.end()) return;
+    _states.emplace(code, CodeState(_cfg));
+}
+
+void PcaStructureStabilityFactor::on_code_added(const std::string& code) {
     ensure_state(code);
-    auto& s = _states[code];
-    s.pca.push(x);
-    maybe_publish(code, ts);
 }
 
-void PCAStructureStabilityFactor::maybe_publish(const std::string& code, int64_t ts) {
-    auto& s = _states[code];
-    if (s.pca.n_samples() < 4) return;
-    const auto& comps = s.pca.components();
+// =====================[ 特征构造 ]=====================
+
+std::vector<double> PcaStructureStabilityFactor::make_features(const Bar& b,
+                                                               double ret) const {
+    std::vector<double> x(static_cast<std::size_t>(_cfg.dims), 0.0);
+    const double vol = static_cast<double>(b.volume);
+    double vwap = b.close;
+    if (vol > 0.0 && b.turnover > 0.0) {
+        vwap = b.turnover / vol;
+    }
+
+    if (_cfg.dims >= 1) x[0] = ret;
+    if (_cfg.dims >= 2) x[1] = std::log(vol + 1.0);
+    if (_cfg.dims >= 3) x[2] = std::log(vwap > 0.0 ? vwap : b.close);
+
+    // 额外维度若存在，保持 0 即可（当前不使用）
+    return x;
+}
+
+// =====================[ 核心逻辑 ]=====================
+
+void PcaStructureStabilityFactor::on_price_event(const std::string& code,
+                                                 int64_t ts_ms,
+                                                 const Bar& b) {
+    if (!(b.close > 0.0)) return;
+
+    ensure_state(code);
+    auto& st = _states.at(code);
+
+    double close = b.close;
+    if (!st.has_last_close) {
+        st.last_close = close;
+        st.has_last_close = true;
+        return;
+    }
+
+    double ret = 0.0;
+    double ratio = close / st.last_close;
+    if (ratio > 0.0) {
+        ret = std::log(ratio);
+    }
+    st.last_close = close;
+
+    if (!std::isfinite(ret)) return;
+
+    auto x = make_features(b, ret);
+
+    if (!st.pca.push(x)) {
+        LOG_DEBUG("PcaStructureStabilityFactor: push failed, code={}", code);
+        return;
+    }
+
+    ++st.n_samples;
+    if (st.n_samples < _cfg.warmup) return;
+
+    maybe_publish(code, st, ts_ms);
+}
+
+void PcaStructureStabilityFactor::maybe_publish(const std::string& code,
+                                                CodeState& st,
+                                                int64_t ts_ms) {
+    const auto& comps = st.pca.components();
     if (comps.empty()) return;
-    const auto& v = comps[0];
-
-    // 计算与上一帧的 cos 相似度
-    double cos_sim = std::numeric_limits<double>::quiet_NaN();
-    if (std::isfinite(s.last_v1_angle)) {
-        // last_v1_angle 存储上一步与参考向量的夹角的 cos 值，
-        // 为简化我们存储上一步的主方向向量，并在这里与当前做点积。
+    const auto& pc1 = comps.front();
+    if (pc1.size() != st.last_pc1.size()) {
+        // 维度变化（理论上不会发生），重置
+        st.last_pc1.assign(pc1.size(), 0.0);
+        st.last_pc1_valid = false;
     }
-    // 我们直接存储上一主向量
-    static thread_local std::unordered_map<std::string, std::vector<double>> last_vecs;
-    auto it = last_vecs.find(code);
-    if (it != last_vecs.end()) {
-        const auto& u = it->second;
-        double dot=0.0, nu=0.0, nv=0.0;
-        for (size_t i=0;i<v.size();++i){ dot += u[i]*v[i]; nu += u[i]*u[i]; nv += v[i]*v[i]; }
-        if (nu>0 && nv>0) cos_sim = dot / std::sqrt(nu*nv);
-    }
-    last_vecs[code] = v;
 
-    if (std::isfinite(cos_sim)) {
-        safe_publish<double>(TOP_PCA_STAB, code, ts, cos_sim);
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("PCAStability[{}]: cos(Δθ)={:.6f}", code, cos_sim);
+    double cos_val = 0.0;
+    if (st.last_pc1_valid) {
+        double dot = 0.0, n1 = 0.0, n2 = 0.0;
+        for (std::size_t i = 0; i < pc1.size(); ++i) {
+            double a = pc1[i];
+            double b = st.last_pc1[i];
+            dot += a * b;
+            n1  += a * a;
+            n2  += b * b;
         }
+        if (n1 > 0.0 && n2 > 0.0) {
+            cos_val = dot / (std::sqrt(n1) * std::sqrt(n2));
+            if (cos_val > 1.0) cos_val = 1.0;
+            if (cos_val < -1.0) cos_val = -1.0;
+        } else {
+            cos_val = 0.0;
+        }
+    } else {
+        // 第一次有 pc1，暂时不给出稳定性评分
+        st.last_pc1 = pc1;
+        st.last_pc1_valid = true;
+        return;
     }
+
+    st.last_pc1 = pc1;
+    st.last_pc1_valid = true;
+
+    double stability = std::fabs(cos_val);
+
+    LOG_DEBUG("PcaStructureStabilityFactor: code={} ts={} stability={} cos={}",
+              code, ts_ms, stability, cos_val);
+
+    safe_publish<double>(TOP_PCA_STAB, code, ts_ms, stability);
 }
 
-void PCAStructureStabilityFactor::on_quote(const QuoteDepth& q) {
-    ensure_state(q.instrument_id);
-    auto& s = _states[q.instrument_id];
-    double mid = (q.bid_price + q.ask_price)/2.0;
-    if (s.has_last_price && s.last_price>0.0) {
-        double ret = std::log(mid / s.last_price);
-        // 仅报价时没有 OFI/volume，用 0 代替
-        feed_vec(q.instrument_id, q.data_time_ms, {ret, 0.0, s.ofi_acc});
-        s.ofi_acc = 0.0; // 清零
-    }
-    s.last_price = mid; s.has_last_price = true;
-}
+// =====================[ IFactor 接口 ]=====================
 
-void PCAStructureStabilityFactor::on_tick(const CombinedTick& x) {
-    ensure_state(x.instrument_id);
-    auto& s = _states[x.instrument_id];
-    if (x.kind==CombinedKind::Trade) {
-        // 累计 OFI（买=+，卖=-）
-        double ofi = (x.side>0 ? 1.0 : -1.0) * static_cast<double>(x.volume);
-        s.ofi_acc += ofi;
-        if (s.has_last_price && s.last_price>0.0) {
-            double ret = std::log(x.price / s.last_price);
-            feed_vec(x.instrument_id, x.data_time_ms, {ret, static_cast<double>(x.volume), ofi});
-            s.last_price = x.price; // 以成交近似
-            return;
-        }
-        s.last_price = x.price;
-        s.has_last_price = true;
-    }
+void PcaStructureStabilityFactor::on_bar(const Bar& b) {
+    on_price_event(b.instrument_id, b.data_time_ms, b);
 }
 
 } // namespace factorlib

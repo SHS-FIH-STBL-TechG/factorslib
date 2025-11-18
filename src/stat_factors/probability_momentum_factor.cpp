@@ -56,9 +56,6 @@ ProbabilityMomentumFactor::ProbabilityMomentumFactor(
     }
     _cfg.buy_threshold  = buy_thr;
     _cfg.sell_threshold = sell_thr;
-
-    bool dbg = RC().getb("prob_mom.debug_mode", _cfg.debug_mode);
-    _cfg.debug_mode = dbg;
 }
 
 // =====================[ topic 注册 ]=====================
@@ -104,26 +101,20 @@ void ProbabilityMomentumFactor::compute_and_publish(
         sigma = _cfg.min_sigma;
     }
     if (!(sigma > 0.0)) {
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("ProbabilityMomentumFactor: sigma 非正, code={}", code);
-        }
+        LOG_DEBUG("ProbabilityMomentumFactor: sigma 非正, code={}", code);
         return;
     }
 
     // 正态分布下 P(R > 0) = Φ(mu / sigma)
     double z = mu / sigma;
     if (!std::isfinite(z)) {
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("ProbabilityMomentumFactor: 非有限 z, code={}, z={}", code, z);
-        }
+        LOG_DEBUG("ProbabilityMomentumFactor: 非有限 z, code={}, z={}", code, z);
         return;
     }
 
     double F = Distributions::normal_cdf(z);
     if (!std::isfinite(F)) {
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("ProbabilityMomentumFactor: 非有限 F, code={}, F={}", code, F);
-        }
+        LOG_DEBUG("ProbabilityMomentumFactor: 非有限 F, code={}, F={}", code, F);
         return;
     }
 

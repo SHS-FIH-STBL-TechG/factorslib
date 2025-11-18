@@ -26,5 +26,6 @@ TEST(SymbolicTransitionFactor, EigenvalueNearOne) {
         f.on_quote(q);
     }
     double e1=0.0; ASSERT_TRUE(last_val(code,e1));
-    ASSERT_LE(e1, 1.05); ASSERT_GE(e1, 0.8);
+    ASSERT_LE(e1, 1.05);
+    ASSERT_GE(e1, 0.8);
 }

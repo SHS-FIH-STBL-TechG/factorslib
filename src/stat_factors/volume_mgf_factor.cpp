@@ -27,8 +27,6 @@ VolumeMGFFactor::VolumeMGFFactor(const std::vector<std::string>& codes,
         t = 0.01;
     }
     _cfg.t = t;
-
-    _cfg.debug_mode = RC().getb("vol_mgf.debug_mode", _cfg.debug_mode);
 }
 
 // =====================[ 注册 topic ]=====================
@@ -93,16 +91,12 @@ void VolumeMGFFactor::compute_and_publish(const std::string& code,
     double mgf = S.sum_exp / N;
 
     if (!std::isfinite(mgf)) {
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("VolumeMGFFactor {} ts={} got non-finite MGF, skip", code, ts_ms);
-        }
+        LOG_DEBUG("VolumeMGFFactor {} ts={} got non-finite MGF, skip", code, ts_ms);
         return;
     }
 
-    if (_cfg.debug_mode) {
-        LOG_DEBUG("VolumeMGFFactor {} ts={} N={} MGF(t={})={}",
-                  code, ts_ms, N, _cfg.t, mgf);
-    }
+    LOG_DEBUG("VolumeMGFFactor {} ts={} N={} MGF(t={})={}",
+              code, ts_ms, N, _cfg.t, mgf);
 
     safe_publish<double>(TOP_VOL_MGF, code, ts_ms, mgf);
 }

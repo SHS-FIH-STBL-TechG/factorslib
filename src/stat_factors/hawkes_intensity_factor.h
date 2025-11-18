@@ -30,7 +30,6 @@ struct HawkesCfg {
     double alpha = 0.3;
     double beta  = 1.2;
     double dt    = 1.0;
-    bool   debug_mode = false;
 };
 
 inline constexpr const char* TOP_HAWKES = "time/hawkes_intensity";

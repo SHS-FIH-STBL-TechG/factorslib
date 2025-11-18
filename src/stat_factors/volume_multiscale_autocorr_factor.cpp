@@ -37,8 +37,6 @@ VolumeMultiscaleAutocorrFactor::VolumeMultiscaleAutocorrFactor(
     _cfg.lag3 = RC().geti("vol_ac.lag3", _cfg.lag3);
     _cfg.lag4 = RC().geti("vol_ac.lag4", _cfg.lag4);
 
-    _cfg.debug_mode = RC().getb("vol_ac.debug_mode", _cfg.debug_mode);
-
     if (!(_cfg.lag1 > 0 && _cfg.lag2 > 0 && _cfg.lag3 > 0 && _cfg.lag4 > 0)) {
         LOG_WARN("VolumeMultiscaleAutocorrFactor: 部分 lag 配置无效，重置为 1/2/4/8");
         _cfg.lag1 = 1;
@@ -101,10 +99,8 @@ void VolumeMultiscaleAutocorrFactor::compute_and_publish(const std::string& code
     // 简单平均，多尺度一致性
     double multi = 0.25 * (r1 + r2 + r3 + r4);
 
-    if (_cfg.debug_mode) {
-        LOG_DEBUG("VolMultiAC {} ts={} r1={} r2={} r3={} r4={} multi={}",
-                  code, ts_ms, r1, r2, r3, r4, multi);
-    }
+    LOG_DEBUG("VolMultiAC {} ts={} r1={} r2={} r3={} r4={} multi={}",
+              code, ts_ms, r1, r2, r3, r4, multi);
 
     safe_publish<double>(TOP_VOL_MULTI_AC, code, ts_ms, multi);
 }

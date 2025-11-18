@@ -24,7 +24,6 @@ protected:
 
         GaussianCopulaConfig cfg;
         cfg.window_size = 5;
-        cfg.debug_mode = false;
         cfg.regularization = 1e-6;
 
         factor = std::make_unique<GaussianCopulaFactor>(cfg, std::vector<std::string>{"TEST001"});
@@ -82,18 +81,11 @@ protected:
         // 检查是否有预测值发布
         auto predictions = bus.get_last_n<double>(TOP_PREDICTION, test_code, 10);
 
-        // 调试信息
-        std::cout << "预测值数量: " << predictions.size() << std::endl;
-        for (const auto& pred : predictions) {
-            std::cout << "时间: " << pred.first << ", 预测值: " << pred.second << std::endl;
-        }
-
         // 应该有预测值
         EXPECT_GE(predictions.size(), 1u) << "应该至少有一个预测值";
 
         if (!predictions.empty()) {
             double last_prediction = predictions.back().second;
-            std::cout << "最后预测值: " << last_prediction << std::endl;
 
             // 预测值应该在合理范围内
             EXPECT_TRUE(std::abs(last_prediction) < 0.1) << "预测收益率应该在合理范围内";
@@ -108,7 +100,6 @@ protected:
         // 为这个测试创建独立的因子实例
         GaussianCopulaConfig cfg;
         cfg.window_size = 5;
-        cfg.debug_mode = false;
         cfg.regularization = 1e-6;
         auto test_factor = std::make_unique<GaussianCopulaFactor>(cfg, std::vector<std::string>{unique_code});
 

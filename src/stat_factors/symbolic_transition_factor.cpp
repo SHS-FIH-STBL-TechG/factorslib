@@ -10,7 +10,6 @@ SymbolicTransitionFactor::SymbolicTransitionFactor(const std::vector<std::string
     : BaseFactor("SymbolicTransition", codes), _cfg(cfg) {
     _cfg.window_size = RC().geti("symbolic.window_size", _cfg.window_size);
     _cfg.symbols_k   = RC().geti("symbolic.symbols_k",   _cfg.symbols_k);
-    _cfg.debug_mode  = RC().getb("symbolic.debug_mode",  _cfg.debug_mode);
 }
 
 
@@ -53,9 +52,7 @@ void SymbolicTransitionFactor::maybe_publish(const std::string& code, int64_t ts
     double eig1 = s.sym->leading_eigenvalue();
     if (std::isfinite(eig1)) {
         safe_publish<double>(TOP_SYMBOLIC_EIG1, code, ts, eig1);
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("SymbolicEig1[{}]: k={}, eig1≈{:.6f}", code, _cfg.symbols_k, eig1);
-        }
+        LOG_DEBUG("SymbolicEig1[{}]: k={}, eig1≈{:.6f}", code, _cfg.symbols_k, eig1);
     }
 }
 

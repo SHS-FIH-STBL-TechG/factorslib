@@ -38,7 +38,6 @@ TEST(LeastSquaresInfoGain, BarsCsvFeed_EmitsFactor) {
     const std::string code = bars[0].instrument_id;
 
     LsInfoGainConfig cfg;
-    cfg.debug_mode = false;  // 如需调试可改为 true
     LeastSquaresInfoGainFactor factor({ code }, cfg);
 
     for (const auto& b : bars) {
@@ -65,7 +64,6 @@ TEST(LeastSquaresInfoGain, TransactionsCsvFeed_EmitsFactor) {
     const std::string code = trans[0].instrument_id;
 
     LsInfoGainConfig cfg;
-    cfg.debug_mode = false;
     LeastSquaresInfoGainFactor factor({ code }, cfg);
 
     for (const auto& t : trans) {
@@ -93,7 +91,6 @@ TEST(LeastSquaresInfoGain, SnapshotCsvFeed_EmitsFactor) {
     const std::string code = quotes[0].instrument_id;
 
     LsInfoGainConfig cfg;
-    cfg.debug_mode = false;
     LeastSquaresInfoGainFactor factor({ code }, cfg);
 
     for (const auto& q : quotes) {
@@ -123,7 +120,6 @@ TEST(LeastSquaresInfoGain, MixedCsvFeed_MultiSources) {
     const std::string code = bars[0].instrument_id;
 
     LsInfoGainConfig cfg;
-    cfg.debug_mode = false;
     LeastSquaresInfoGainFactor factor({ code }, cfg);
 
     // 顺序无所谓：Bar -> Transaction -> Quote，三种数据混合驱动

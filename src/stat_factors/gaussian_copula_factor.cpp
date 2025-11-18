@@ -26,8 +26,6 @@ GaussianCopulaFactor::GaussianCopulaFactor(const GaussianCopulaConfig& cfg,
     , _cfg(cfg) {
     _cfg.window_size    = RC().geti ("gaussian.window_size",    _cfg.window_size);
     _cfg.regularization = RC().getd ("gaussian.regularization", _cfg.regularization);
-    _cfg.debug_mode     = RC().getb ("gaussian.debug_mode",     _cfg.debug_mode);
-
 }
 
 void GaussianCopulaFactor::register_topics(size_t capacity) {
@@ -68,7 +66,7 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
         if (inc_state->is_window_full()) {
             double prediction = compute_conditional_expectation_incremental(q.instrument_id);
             publish_prediction(q.instrument_id, prediction, q.data_time_ms);
-        } else if (_cfg.debug_mode) {
+        } else{
             LOG_DEBUG("GaussianCopulaFactor[{}]: 窗口未满：ofi={}, volume={}, ret={}",
                       q.instrument_id,
                       inc_state->ofi_rank_calc.size(),
@@ -80,9 +78,7 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
         state.current_ofi = 0.0;
         state.current_volume = 0.0;
     } else {
-        if (_cfg.debug_mode) {
-            LOG_DEBUG("GaussianCopulaFactor[{}]: 初始化价格: {}", q.instrument_id, mid_price);
-        }
+        LOG_DEBUG("GaussianCopulaFactor[{}]: 初始化价格: {}", q.instrument_id, mid_price);
     }
 
     // 更新状态
@@ -133,9 +129,7 @@ bool GaussianCopulaFactor::force_flush(const std::string& code) {
         std::chrono::system_clock::now().time_since_epoch()).count();
     publish_prediction(code, prediction, timestamp);
 
-    if (_cfg.debug_mode) {
-        LOG_DEBUG("GaussianCopulaFactor: 强制刷新成功，代码 {} 的预测值: {}", code, prediction);
-    }
+    LOG_DEBUG("GaussianCopulaFactor: 强制刷新成功，代码 {} 的预测值: {}", code, prediction);
     return true;
 }
 

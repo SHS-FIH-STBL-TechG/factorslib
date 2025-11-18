@@ -1,113 +1,89 @@
-// src/stat_factors/wavelet_trend_energy_factor.h
 #pragma once
 /**
  * @file wavelet_trend_energy_factor.h
- * @brief 【价-小波趋势能量主导因子】
+ * @brief 小波趋势能量主导因子（价因子 #3）。
  *
- * 定义：对价格序列做 MODWT（最大重叠离散小波变换）多尺度分解，
- *      计算“趋势能量占比” R = (∑_{j=j_t..J} E_j) / (∑_{j=1..J} E_j)。
- *      其中 E_j 是尺度 j 的 detail 系数能量（平方和）；j_t 为“趋势起始层”，一般取 4~6。
+ * 思路：
+ *   - 使用 RollingMODWT<double> 对价格序列做最大重叠小波分解；
+ *   - 对每个尺度 j 维护 detail 系数能量 E_j；
+ *   - 趋势能量比 = (j >= trend_start_j 的能量之和) / (全部能量之和);
+ *   - 通过 DataBus 发布 [0,1] 的能量占比。
  *
- * 设计动机：趋势在较粗尺度（j 较大）上占能量比越高，越说明趋势主导。该指标对高频噪声鲁棒。
- * 高频友好：使用 include/math/modwt.h 的 RollingMODWT 滑窗增量实现，O(1) 维护能量环缓冲。
- *
- * 可配置参数（ini: [wave_trend].*）：
- *  - window_size   (int)  滑窗长度 W（Bar 数）
- *  - levels_J      (int)  小波分解层数 J
- *  - trend_start_j (int)  趋势起点层 j_t
- *  - wavelet       (str)  'db4' 或 'sym4'
- *  - debug_mode    (bool) 调试日志
- *
- * 发布主题：wave_trend/energy_ratio  类型 double，值域 [0,1]（窗口预热前不发布）。
+ * 实现约束：
+ *   - 只依赖 include/math/modwt.h 中真实存在的接口：
+ *       - RollingMODWT<double>(W, J, WaveletFilter)
+ *       - push(double), ready(), trend_energy_ratio(int)
+ *   - 只使用 Bar / QuoteDepth / CombinedTick 中的真实字段：
+ *       - Bar::instrument_id / data_time_ms / close
+ *       - QuoteDepth::instrument_id / data_time_ms / bid_price / ask_price
+ *       - CombinedTick::instrument_id / data_time_ms / price
  */
 
 #include <string>
 #include <unordered_map>
-#include <memory>
+#include <vector>
 
 #include "ifactor.h"
 #include "utils/types.h"
-#include "utils/databus.h"
-#include "utils/log.h"
-#include "../config/runtime_config.h"
 #include "math/modwt.h"
-#include "math/bad_value_policy.h"
 
 namespace factorlib {
 
-struct WaveletTrendConfig {
-    int    window_size   = 256;
-    int    levels_J      = 6;
-    int    trend_start_j = 4;
-    std::string wavelet  = "db4";
-    bool   debug_mode    = false;
+// =====================[ 配置 ]=====================
+
+struct WaveTrendConfig {
+    int         window_size   = 128;     ///< MODWT 滑窗长度
+    int         levels_J      = 6;       ///< 小波分解层数 J
+    int         trend_start_j = 4;       ///< 视为“趋势”的起始尺度 j
+    std::string wavelet       = "db4";   ///< "db4" 或 "sym4"
 };
 
-static inline constexpr const char* TOP_WT_ENERGY = "wave_trend/energy_ratio";
+// 因子输出的 topic 名（单测和业务都会用到）
+inline constexpr const char* TOP_WAVE_TREND = "wave_trend/energy_ratio";
+
+// =====================[ 因子类 ]=====================
 
 class WaveletTrendEnergyFactor : public BaseFactor {
 public:
-    explicit WaveletTrendEnergyFactor(const std::vector<std::string>& codes,
-                                      const WaveletTrendConfig& cfg = {})
-        : BaseFactor("wavelet_trend_energy", codes), _cfg(cfg) {
-        // 允许从 ini 覆盖
-        _cfg.window_size   = config::RC().geti("wave_trend.window_size",   _cfg.window_size);
-        _cfg.levels_J      = config::RC().geti("wave_trend.levels_J",      _cfg.levels_J);
-        _cfg.trend_start_j = config::RC().geti("wave_trend.trend_start_j", _cfg.trend_start_j);
-        _cfg.wavelet       = config::RC().get("wave_trend.wavelet",        _cfg.wavelet);
-        _cfg.debug_mode    = config::RC().getb("wave_trend.debug_mode",    _cfg.debug_mode);
+    WaveletTrendEnergyFactor(const std::vector<std::string>& codes,
+                             const WaveTrendConfig& cfg = {});
+
+    /// 注册 DataBus topic
+    static void register_topics(std::size_t capacity = 1024);
+
+    // IFactor 接口
+    void on_quote(const QuoteDepth& q) override;
+    void on_tick (const CombinedTick& x) override;
+    void on_bar  (const Bar& b) override;
+
+    bool force_flush(const std::string& /*code*/) override {
+        return false;
     }
 
-    static void register_topics(size_t capacity = 120) {
-        DataBus::instance().register_topic<double>(TOP_WT_ENERGY, capacity);
-    }
-
-    void on_quote(const QuoteDepth& /*q*/) override {}
-    void on_tick (const CombinedTick& /*x*/) override {}
-    void on_bar  (const Bar& b) override {
-        const std::string& code = b.instrument_id;
-        ensure_code(code);
-        auto* st = _states[code].get();
-        const double price = b.close;
-        if (!std::isfinite(price)) return;
-        st->modwt->push(price);
-        if (st->modwt->ready()) {
-            const double r = st->modwt->trend_energy_ratio(_cfg.trend_start_j);
-            if (std::isfinite(r)) {
-                DataBus::instance().publish<double>(TOP_WT_ENERGY, code, b.data_time_ms, r);
-                if (_cfg.debug_mode) SPDLOG_DEBUG("[{}] {} @{} R={:.6f}", TOP_WT_ENERGY, code, b.data_time_ms, r);
-            }
-        }
-    }
-
-    bool force_flush(const std::string& /*code*/) override { return false; }
-
-protected:
-    void on_code_added(const std::string& code) override {
-        (void)code;
-        // 在真正首次使用到该 code 时，构造其 modwt（放在 ensure_code 内部）
-    }
+    void on_code_added(const std::string& code) override;
 
 private:
     struct CodeState {
-        std::unique_ptr<math::RollingMODWT<double, math::NoCheckBadValuePolicy>> modwt;
-    };
-    std::unordered_map<std::string, std::unique_ptr<CodeState>> _states;
-    WaveletTrendConfig _cfg;
+        math::RollingMODWT<double> modwt;
+        bool ready = false;
 
-    void ensure_code(const std::string& code) {
-        if (_states.find(code) != _states.end()) return;
-        auto st = std::make_unique<CodeState>();
-        // 选择小波基
-        math::WaveletFilter wf =
-            (_cfg.wavelet == "sym4") ? math::wavelet_sym4() : math::wavelet_db4();
-        st->modwt = std::make_unique< math::RollingMODWT<double, math::NoCheckBadValuePolicy> >(
-            static_cast<std::size_t>(_cfg.window_size),
-            _cfg.levels_J,
-            wf
-        );
-        _states.emplace(code, std::move(st));
-    }
+        explicit CodeState(const WaveTrendConfig& cfg);
+    };
+
+    WaveTrendConfig _cfg;
+    std::unordered_map<std::string, CodeState> _states;
+
+    void ensure_state(const std::string& code);
+
+    /// 统一价格事件入口（支持 Quote / Tick / Bar）
+    void on_price_event(const std::string& code,
+                        int64_t ts_ms,
+                        double price);
+
+    /// 在窗口 ready() 时计算能量比并发布
+    void compute_and_publish(const std::string& code,
+                             CodeState& st,
+                             int64_t ts_ms);
 };
 
 } // namespace factorlib

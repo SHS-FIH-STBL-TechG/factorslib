@@ -50,7 +50,6 @@ TEST(ProbabilityMomentum, BarsCsvFeed_ExpectationMatches) {
     cfg.min_sigma        = 1e-6;
     cfg.buy_threshold    = 0.7;
     cfg.sell_threshold   = 0.3;
-    cfg.debug_mode       = false;
 
     ProbabilityMomentumFactor factor({ code }, cfg);
 
@@ -93,7 +92,6 @@ TEST(ProbabilityMomentum, TransactionsCsvFeed_ExpectationMatches) {
     cfg.min_sigma        = 1e-6;
     cfg.buy_threshold    = 0.7;
     cfg.sell_threshold   = 0.3;
-    cfg.debug_mode       = false;
 
     ProbabilityMomentumFactor factor({ code }, cfg);
 
@@ -136,7 +134,6 @@ TEST(ProbabilityMomentum, SnapshotCsvFeed_EmitsFiniteFactor) {
     cfg.min_sigma        = 1e-6;
     cfg.buy_threshold    = 0.7;
     cfg.sell_threshold   = 0.3;
-    cfg.debug_mode       = false;
 
     ProbabilityMomentumFactor factor({ code }, cfg);
 

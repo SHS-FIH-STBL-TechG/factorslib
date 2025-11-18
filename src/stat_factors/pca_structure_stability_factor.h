@@ -1,23 +1,24 @@
 #pragma once
 /**
  * @file pca_structure_stability_factor.h
- * @brief 【空因子 #17】主成分结构稳定性因子（PC1 方向变化角）。
+ * @brief 多维状态结构稳定性因子：在线 PCA 的主方向相邻余弦相似度。
  *
- * 定义：
- *   利用增量 PCA（Oja）对 d 维向量 x_t 做在线主成分提取；
- *   记当前与上一步的一主成分向量 v_t, v_{t-1}，定义稳定性：
- *       S = cos(∠(v_t, v_{t-1})) = <v_t, v_{t-1}>
- *   取值 ∈ [-1,1]，越接近 1 说明结构越稳定。
+ * 思路：
+ *   - 对每个标的构造特征向量 x_t（如 [log-return, log(volume+1), log(vwap+1)]）；
+ *   - 使用 include/math/online_pca.h 中的 OnlinePCA<double> 做增量 PCA；
+ *   - 每步取第一主成分向量 u_t（components()[0]），与上一时刻 u_{t-1} 做余弦相似度：
+ *        S_t = | <u_t, u_{t-1}> |，范围 [0,1]，越接近 1 表示结构越稳定；
+ *   - 在 DataBus 上发布 S_t。
  *
- * 特征向量构造（默认三维）：
- *   x_t = [对数收益, 成交量, OFI]ᵀ，其中 OFI≈买量-卖量（逐笔成交方向近似）。
- *
- * 参考：factor_design.md（空因子-主成分结构稳定性）fileciteturn0file0
+ * 只使用 OnlinePCA 提供的接口：
+ *   - 构造：OnlinePCA<double>(dims, k, lr)
+ *   - push(const std::vector<double>&)
+ *   - components() const
  */
 
 #include <string>
-#include <unordered_map>
 #include <vector>
+#include <unordered_map>
 #include <cmath>
 
 #include "ifactor.h"
@@ -25,45 +26,66 @@
 #include "utils/databus.h"
 #include "utils/log.h"
 #include "math/online_pca.h"
-#include "../config/runtime_config.h"
 
 namespace factorlib {
 
-struct PCAStabilityCfg {
-    int    dims = 3;     ///< 特征维度，默认 3（return, volume, ofi）
-    int    k    = 1;     ///< 主成分数，只需 1
-    double lr   = 0.05;  ///< Oja 学习率
-    bool   debug_mode=false;
+struct PcaStructureStabilityConfig {
+    int   dims       = 3;      ///< 特征维度（默认 3）
+    int   k          = 1;      ///< 主成分个数（当前只用第 1 主成分）
+    double lr        = 0.05;   ///< Oja 更新学习率
+    int   warmup     = 64;     ///< 最少有效样本数（预热期）
 };
 
 inline constexpr const char* TOP_PCA_STAB = "space/pca_stability";
 
-class PCAStructureStabilityFactor : public BaseFactor {
+class PcaStructureStabilityFactor : public BaseFactor {
 public:
-    explicit PCAStructureStabilityFactor(const std::vector<std::string>& codes,
-                                         const PCAStabilityCfg& cfg = {});
-    static void register_topics(size_t capacity=2048) {
-        DataBus::instance().register_topic<double>(TOP_PCA_STAB, capacity);
-    }
+    PcaStructureStabilityFactor(const std::vector<std::string>& codes,
+                                const PcaStructureStabilityConfig& cfg = {});
 
-    void on_tick(const CombinedTick& x) override;
-    void on_quote(const QuoteDepth& q) override;
-    bool force_flush(const std::string& code) override { (void)code; return false; }
+    /// 注册 DataBus topic
+    static void register_topics(std::size_t capacity = 1024);
+
+    // IFactor 接口
+    void on_quote(const QuoteDepth& /*q*/) override {}
+    void on_tick (const CombinedTick& /*x*/) override {}
+    void on_bar  (const Bar& b) override;
+
+    bool force_flush(const std::string& /*code*/) override { return false; }
+
+    void on_code_added(const std::string& code) override;
 
 private:
     struct CodeState {
-        bool has_last_price=false;
-        double last_price=0.0;
-        double last_v1_angle=std::numeric_limits<double>::quiet_NaN();
-        double ofi_acc=0.0;   ///< 本 tick 累计 OFI（逐笔）
-        math::OnlinePCA pca{3,1,0.05};
+        math::OnlinePCA<double> pca;
+        bool   has_last_close   = false;
+        double last_close       = 0.0;
+
+        bool   last_pc1_valid   = false;
+        std::vector<double> last_pc1;
+        long long n_samples     = 0;
+
+        explicit CodeState(const PcaStructureStabilityConfig& cfg);
     };
-    PCAStabilityCfg _cfg;
+
+    PcaStructureStabilityConfig _cfg;
     std::unordered_map<std::string, CodeState> _states;
 
     void ensure_state(const std::string& code);
-    void feed_vec(const std::string& code, int64_t ts, const std::vector<double>& x);
-    void maybe_publish(const std::string& code, int64_t ts);
+
+    /// 从 Bar 构造特征向量
+    std::vector<double> make_features(const Bar& b,
+                                      double ret) const;
+
+    /// 统一价格事件入口
+    void on_price_event(const std::string& code,
+                        int64_t ts_ms,
+                        const Bar& b);
+
+    /// 计算结构稳定性并发布
+    void maybe_publish(const std::string& code,
+                       CodeState& st,
+                       int64_t ts_ms);
 };
 
 } // namespace factorlib

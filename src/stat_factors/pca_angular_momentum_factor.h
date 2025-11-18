@@ -1,64 +1,84 @@
 #pragma once
 /**
- * @file src/stat_factors/pca_angular_momentum_factor.h
- * @brief 【空因子 #38】多尺度主成分角动量因子（简化实现）。
+ * @file pca_angular_momentum_factor.h
+ * @brief 多尺度主成分“角动量”因子：在前两主成分子空间中的轨迹弯曲强度。
  *
- * 定义（简化）：
- *   对特征向量 x_t 做在线 PCA，取 PC1 的特征值 λ₁ 作为“质量 m”，
- *   取状态向量 r_t = 均值向量 μ_t，速度 v_t ≈ μ_t - μ_{t-1}，
- *   定义角动量标量 L = m * || r_t × v_t ||（三维向量叉乘模长）。
- *   L 越大表示“旋转运动”越强。
- *
- * 参考：factor_design.md（空因子-多尺度主成分角动量）fileciteturn0file0
+ * 直观解释：
+ *   - 使用 OnlinePCA<double> 在线估计前 k(>=2) 个主成分；
+ *   - 将当前特征向量 x_t 投影到前两主成分 (PC1, PC2) 得到坐标 (u_t, v_t)；
+ *   - 与上一时刻 (u_{t-1}, v_{t-1}) 形成的二维向量做叉积模长：
+ *         L_t = |u_{t-1} * v_t - v_{t-1} * u_t|
+ *     近似刻画“运动轨迹”的转弯/旋转强度，越大说明结构变化越剧烈。
  */
 
 #include <string>
-#include <unordered_map>
 #include <vector>
+#include <unordered_map>
 #include <cmath>
+
 #include "ifactor.h"
 #include "utils/types.h"
 #include "utils/databus.h"
 #include "utils/log.h"
 #include "math/online_pca.h"
-#include "../config/runtime_config.h"
 
 namespace factorlib {
 
-struct PCAAngMomCfg {
-    int    dims = 3;
-    int    k    = 1;
-    double lr   = 0.05;
-    bool   debug_mode=false;
+struct PcaAngularMomentumConfig {
+    int   dims       = 3;      ///< 特征维度
+    int   k          = 2;      ///< 至少 2 个主成分
+    double lr        = 0.05;   ///< Oja 学习率
+    int   warmup     = 64;     ///< 预热样本数
 };
 
-inline constexpr const char* TOP_PCA_L = "space/pca_angmom";
+inline constexpr const char* TOP_PCA_ANG = "space/pca_angmom";
 
-class PCAAngularMomentumFactor : public BaseFactor {
+class PcaAngularMomentumFactor : public BaseFactor {
 public:
-    explicit PCAAngularMomentumFactor(const std::vector<std::string>& codes,
-                                      const PCAAngMomCfg& cfg = {});
-    static void register_topics(size_t capacity=2048) {
-        DataBus::instance().register_topic<double>(TOP_PCA_L, capacity);
-    }
+    PcaAngularMomentumFactor(const std::vector<std::string>& codes,
+                             const PcaAngularMomentumConfig& cfg = {});
 
-    void on_tick(const CombinedTick& x) override;
-    void on_quote(const QuoteDepth& q) override;
-    bool force_flush(const std::string& code) override { (void)code; return false; }
+    static void register_topics(std::size_t capacity = 1024);
+
+    void on_quote(const QuoteDepth& /*q*/) override {}
+    void on_tick (const CombinedTick& /*x*/) override {}
+    void on_bar  (const Bar& b) override;
+
+    bool force_flush(const std::string& /*code*/) override { return false; }
+
+    void on_code_added(const std::string& code) override;
 
 private:
     struct CodeState {
-        bool has_last_price=false;
-        double last_price=0.0;
-        std::vector<double> last_mean;
-        math::OnlinePCA pca{3,1,0.05};
+        math::OnlinePCA<double> pca;
+        bool   has_last_close   = false;
+        double last_close       = 0.0;
+
+        bool   last_proj_valid  = false;
+        double last_u           = 0.0;  ///< 上一次在 PC1 上的投影
+        double last_v           = 0.0;  ///< 上一次在 PC2 上的投影
+
+        long long n_samples     = 0;
+
+        explicit CodeState(const PcaAngularMomentumConfig& cfg);
     };
-    PCAAngMomCfg _cfg;
+
+    PcaAngularMomentumConfig _cfg;
     std::unordered_map<std::string, CodeState> _states;
 
     void ensure_state(const std::string& code);
-    void feed_vec(const std::string& code, int64_t ts, const std::vector<double>& x);
-    void maybe_publish(const std::string& code, int64_t ts);
+
+    std::vector<double> make_features(const Bar& b,
+                                      double ret) const;
+
+    void on_price_event(const std::string& code,
+                        int64_t ts_ms,
+                        const Bar& b);
+
+    void maybe_publish(const std::string& code,
+                       CodeState& st,
+                       int64_t ts_ms,
+                       const std::vector<double>& x);
 };
 
 } // namespace factorlib

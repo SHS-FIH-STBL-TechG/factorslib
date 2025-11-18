@@ -22,9 +22,6 @@ namespace factorlib {
 struct LsInfoGainConfig {
     /// 滑动窗口长度（样本条数）。窗口满窗后，每来一条新价格事件就更新一次因子。
     int  window_size = 30;
-
-    /// 调试日志开关
-    bool debug_mode  = false;
 };
 
 // 主题名

@@ -35,10 +35,9 @@
 namespace factorlib {
 
 struct MemoryKernelConfig {
-    int    window_size = 256;
+    int    window_size = 128;
     int    L           = 50;
     double alpha       = 0.6;
-    bool   debug_mode  = false;
 };
 
 static inline constexpr const char* TOP_MEMK = "memory_kernel/decay";
@@ -51,7 +50,6 @@ public:
         _cfg.window_size = config::RC().geti("mem_kernel.window_size", _cfg.window_size);
         _cfg.L           = config::RC().geti("mem_kernel.L",           _cfg.L);
         _cfg.alpha       = config::RC().getd("mem_kernel.alpha",       _cfg.alpha);
-        _cfg.debug_mode  = config::RC().getb("mem_kernel.debug_mode",  _cfg.debug_mode);
     }
 
     static void register_topics(size_t capacity=120) {
@@ -73,7 +71,7 @@ public:
                 double M = st->mk->value();
                 if (std::isfinite(M)) {
                     DataBus::instance().publish<double>(TOP_MEMK, code, b.data_time_ms, M);
-                    if (_cfg.debug_mode) SPDLOG_DEBUG("[{}] {} @{} M={:.6f}", TOP_MEMK, code, b.data_time_ms, M);
+                    LOG_DEBUG("[{}] {} @{} M={:.6f}", TOP_MEMK, code, b.data_time_ms, M);
                 }
             }
         }

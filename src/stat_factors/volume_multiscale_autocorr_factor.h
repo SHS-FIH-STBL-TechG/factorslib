@@ -29,12 +29,11 @@ namespace factorlib {
 // =====================[ 配置 ]=====================
 
 struct VolumeMultiscaleAutocorrConfig {
-    int  window_size = 256;  ///< 滑窗长度（样本数）
+    int  window_size = 128;  ///< 滑窗长度（样本数）
     int  lag1        = 1;    ///< 第一层滞后
     int  lag2        = 2;    ///< 第二层滞后
     int  lag3        = 4;    ///< 第三层滞后
     int  lag4        = 8;    ///< 第四层滞后
-    bool debug_mode  = false;
 };
 
 // =====================[ 主题名 ]=====================

@@ -28,7 +28,6 @@ namespace factorlib {
         // 发布/数值处理相关
         _cfg.use_neglog10  = RC().getb ("granger.use_neglog10",  _cfg.use_neglog10);
         _cfg.strength_clip = RC().getd ("granger.strength_clip", _cfg.strength_clip);
-        _cfg.debug_mode    = RC().getb ("granger.debug_mode",    _cfg.debug_mode);
 
         //选择数据来源
         const std::string fm = RC().get("granger.feed_mode", "");

@@ -41,7 +41,6 @@ struct GrangerConfig {
     bool    use_neglog10  = true;  ///< 输出 -log10(p)
     bool    publish_raw_p = false; ///< 额外发布 p 原值
     double  strength_clip = 20.0;  ///< -log10(p) 裁剪上限
-    bool    debug_mode    = false; ///< 调试日志
 };
 
 // 主题名

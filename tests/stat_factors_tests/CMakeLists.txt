@@ -9,21 +9,13 @@ add_executable(stat_factors_tests
         probability_momentum_factor_test.cpp
         ../utils/test_config.h
         ../utils/test_config.cpp
-
         wavelet_trend_energy_factor_test.cpp
-
         memory_kernel_decay_factor_test.cpp
-
         volume_multiscale_autocorr_factor_test.cpp
-
         volume_mgf_factor_test.cpp
-
         hawkes_intensity_factor_test.cpp
-
         symbolic_transition_factor_test.cpp
-
         pca_structure_stability_factor_test.cpp
-
         pca_angular_momentum_factor_test.cpp
 )
 
