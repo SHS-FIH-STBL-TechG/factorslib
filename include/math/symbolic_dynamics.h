@@ -1,6 +1,6 @@
 #pragma once
 /**
- * @file symbolic_dynamics.h
+ * @file include/math/symbolic_dynamics.h
  * @brief 符号化与一阶马尔可夫转移矩阵的滑窗增量实现；
  *        支持：转移矩阵、稳态分布、熵产生率（近似）与拓扑熵（基于邻接谱半径近似）。
  */
@@ -134,6 +134,12 @@ public:
             sigma += pi[i] * P[i][j] * std::log(P[i][j] / P[j][i]);
         }
         return static_cast<double>(sigma);
+    }
+
+    /// 转移矩阵的主特征值（谱半径）近似
+    double leading_eigenvalue() const {
+        auto P = transition_matrix();
+        return power_method_dominant_eig(P, 32);
     }
 
 private:

@@ -1,6 +1,6 @@
 #pragma once
 /**
- * @file online_pca.h
+ * @file include/math/online_pca.h
  * @brief 增量 PCA（Oja 法 + 流式均值/协方差），适合高频维度 <= 16 的场景。
  *
  * 我们提供两个接口：

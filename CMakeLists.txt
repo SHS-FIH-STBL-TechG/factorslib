@@ -156,6 +156,38 @@ add_library(factor_basic
         src/stat_factors/least_squares_info_gain_factor.h
         src/stat_factors/least_squares_info_gain_factor.cpp
         src/stat_factors/probability_momentum_factor.cpp
+
+        src/stat_factors/wavelet_trend_energy_factor.cpp
+
+        src/stat_factors/wavelet_trend_energy_factor.h
+
+        src/stat_factors/memory_kernel_decay_factor.cpp
+
+        src/stat_factors/memory_kernel_decay_factor.h
+
+        src/stat_factors/volume_multiscale_autocorr_factor.cpp
+
+        src/stat_factors/volume_multiscale_autocorr_factor.h
+
+        src/stat_factors/volume_mgf_factor.cpp
+
+        src/stat_factors/volume_mgf_factor.h
+
+        src/stat_factors/hawkes_intensity_factor.cpp
+
+        src/stat_factors/hawkes_intensity_factor.h
+
+        src/stat_factors/symbolic_transition_factor.cpp
+
+        src/stat_factors/symbolic_transition_factor.h
+
+        src/stat_factors/pca_structure_stability_factor.cpp
+
+        src/stat_factors/pca_structure_stability_factor.h
+
+        src/stat_factors/pca_angular_momentum_factor.cpp
+
+        src/stat_factors/pca_angular_momentum_factor.h
 )
 
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
