@@ -16,6 +16,22 @@ option(FACTORLIB_USE_THIRD_PARTY "Prefer bundled third_party libs" ON)
 option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
 option(FACTORLIB_WITH_DEMO_E2E "Build E2E test depending on demo_header" OFF)
 option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests (non-E2E)" ON)
+option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
+# 打印所有相关选项
+message(STATUS "========== factorlib CMake options ==========")
+
+foreach(opt
+        FACTORLIB_BUILD_TESTS
+        FACTORLIB_USE_THIRD_PARTY
+        FACTORLIB_ENABLE_TRACE_DEBUG
+        FACTORLIB_WITH_DEMO_E2E
+        FACTORLIB_BUILD_UNIT_TESTS
+        FACTORLIB_BUILD_MATH_TESTS
+)
+    message(STATUS "  ${opt} = ${${opt}}")
+endforeach()
+
+message(STATUS "============================================")
 
 # ========================
 # 编译选项
@@ -26,6 +42,13 @@ if (MSVC)
     add_compile_options(/Zc:__cplusplus)  # 让 __cplusplus 正确报告 C++17
 else()
     add_compile_options(-Wall -Wextra -O2)
+endif()
+
+# ========================
+# 全局线程库（非 MSVC）
+# ========================
+if (NOT MSVC)
+    find_package(Threads REQUIRED)
 endif()
 
 # ========================
@@ -41,6 +64,7 @@ if (FACTORLIB_USE_THIRD_PARTY)
     set(EIGEN3_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eigen)
     if (EXISTS "${EIGEN3_INCLUDE_DIR}/Eigen/Core")
         message(STATUS "Using bundled Eigen: ${EIGEN3_INCLUDE_DIR}")
+        # 全局 Eigen 头文件
         include_directories(${EIGEN3_INCLUDE_DIR})
     else()
         message(WARNING "Eigen headers NOT found at ${EIGEN3_INCLUDE_DIR}")
@@ -49,7 +73,7 @@ if (FACTORLIB_USE_THIRD_PARTY)
     endif()
 endif()
 
-# ---------- 工程内公共头路径 ----------
+# ---------- 工程内公共头路径（全局可用） ----------
 include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -59,21 +83,43 @@ include_directories(
 set(BOOST_VENDOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/boost)
 if (EXISTS "${BOOST_VENDOR_DIR}/boost/config.hpp")
     message(STATUS "Using bundled Boost headers (bcp): ${BOOST_VENDOR_DIR}")
+    # 全局 Boost 头文件
+    include_directories(${BOOST_VENDOR_DIR})
 else()
     message(FATAL_ERROR "Bundled Boost headers not found at ${BOOST_VENDOR_DIR}.
     请先用 bcp 导出到 factors_lib/third_party/boost，再重新配置。")
 endif()
 
-# 统一把 Boost vendor include 加到各目标
-set(FACTORLIB_THIRDPARTY_INCLUDES
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${BOOST_VENDOR_DIR}
-        ${EIGEN3_INCLUDE_DIR}
-)
+# ---------- nanoflann ----------
+set(NANOFLANN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanoflann)
+if (EXISTS "${NANOFLANN_INCLUDE_DIR}/nanoflann.hpp")
+    message(STATUS "Using bundled nanoflann: ${NANOFLANN_INCLUDE_DIR}")
+    # 全局 nanoflann 头文件
+    include_directories(${NANOFLANN_INCLUDE_DIR})
+else()
+    message(FATAL_ERROR "nanoflann.hpp not found at ${NANOFLANN_INCLUDE_DIR}.
+    请把 nanoflann.hpp 放到 factorlib/third_party/nanoflann 目录下。")
+endif()
 
 # ---------- spdlog：始终使用 third_party/spdlog ----------
 set(SPDLOG_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog/include)
 message(STATUS "Using spdlog headers: ${SPDLOG_INCLUDE_DIR}")
+# 全局 spdlog 头文件
+include_directories(${SPDLOG_INCLUDE_DIR})
+
+# ---------- 全局日志相关宏（所有 target 共用） ----------
+if (FACTORLIB_ENABLE_TRACE_DEBUG)
+    add_definitions(
+            -DUSE_SPDLOG=1
+            -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
+    )
+else()
+    add_definitions(
+            -DUSE_SPDLOG=1
+            -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
+            -DFACTORLIB_NO_DEBUG_TRACE=1
+    )
+endif()
 
 # ========== 组件：工具库（日志 + 通用工具） ==========
 add_library(factorlib_utils
@@ -85,24 +131,17 @@ add_library(factorlib_utils
         include/math/incremental_rank.h
         include/utils/config/feed_mode.h
         include/math/sliding_normal_eq.h
-        # 注意：移除了 math_utils.cpp
-)
-target_include_directories(factorlib_utils PUBLIC
-        ${FACTORLIB_THIRDPARTY_INCLUDES}
-        ${SPDLOG_INCLUDE_DIR}
+        # 注意：已去掉 math_utils.cpp
 )
 
-# spdlog/日志相关宏（utils）
-if (FACTORLIB_ENABLE_TRACE_DEBUG)
-    target_compile_definitions(factorlib_utils PUBLIC
-            USE_SPDLOG=1
-            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
-    )
-else()
-    target_compile_definitions(factorlib_utils PUBLIC
-            USE_SPDLOG=1
-            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
-            FACTORLIB_NO_DEBUG_TRACE=1
+# 对外暴露工程内头文件（第三方已经通过全局 include_directories 提供）
+target_include_directories(factorlib_utils PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+if (MSVC)
+    target_compile_definitions(factorlib_utils
+            INTERFACE _USE_MATH_DEFINES
     )
 endif()
 
@@ -118,64 +157,30 @@ add_library(factor_basic
         src/stat_factors/least_squares_info_gain_factor.cpp
         src/stat_factors/probability_momentum_factor.cpp
 )
+
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${SPDLOG_INCLUDE_DIR}
 )
 
-# spdlog/日志相关宏（factor_basic）
-if (FACTORLIB_ENABLE_TRACE_DEBUG)
-    target_compile_definitions(factor_basic PUBLIC
-            USE_SPDLOG=1
-            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
-    )
-else()
-    target_compile_definitions(factor_basic PUBLIC
-            USE_SPDLOG=1
-            SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
-            FACTORLIB_NO_DEBUG_TRACE=1
-    )
-endif()
-
-# ---------- 测试 ----------
+# ---------- 单元测试 ----------
 if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     enable_testing()
 
-    # 因子相关测试（统一 run_tests）
+    # 因子相关测试（这里只保留非 stat_factors 的，stat_factors 单独拆目录）
     set(FACTORLIB_TEST_SOURCES
             tests/basic_factors_tests/tick_trans_orders_test.cpp
             tests/test_wait.cpp
             tests/factor_compute_test.cpp
-            tests/stat_factors_tests/gaussian_copula_factor_test.cpp
-            tests/stat_factors_tests/granger_causality_factor_test.cpp
             tests/utils/test_config.h
             tests/utils/test_config.cpp
-            tests/stat_factors_tests/least_squares_info_gain_factor_test.cpp
-            tests/stat_factors_tests/probability_momentum_factor_test.cpp
     )
 
     add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
     target_link_libraries(run_tests PRIVATE factor_basic factorlib_utils gtest gtest_main)
 
     if (NOT MSVC)
-        find_package(Threads REQUIRED)
         target_link_libraries(run_tests PRIVATE Threads::Threads)
-    endif()
-
-    # spdlog 配置（run_tests）
-    target_include_directories(run_tests PRIVATE ${SPDLOG_INCLUDE_DIR})
-    if (FACTORLIB_ENABLE_TRACE_DEBUG)
-        target_compile_definitions(run_tests PRIVATE
-                USE_SPDLOG=1
-                SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
-        )
-    else()
-        target_compile_definitions(run_tests PRIVATE
-                USE_SPDLOG=1
-                SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
-                FACTORLIB_NO_DEBUG_TRACE=1
-        )
     endif()
 
     # demo_header 路径
@@ -185,39 +190,13 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
 
     add_test(NAME run_all COMMAND run_tests)
 
-    # ---------- 数学工具单独测试目标 ----------
-    add_executable(math_tests
-            tests/math_tests/all_math_tests.cpp
-            tests/math_tests/distributions_test.cpp
-            tests/math_tests/incremental_rank_test.cpp
-            tests/math_tests/linear_algebra_test.cpp
-            tests/math_tests/numeric_utils_test.cpp
-            tests/math_tests/sliding_normal_eq_test.cpp
-            "tests/math_tests/ sliding_statistics_test.cpp"
-            tests/math_tests/statistics_test.cpp
-    )
-    target_link_libraries(math_tests PRIVATE factorlib_utils gtest gtest_main)
+    # stat_factors 测试子目录
+    add_subdirectory(tests/stat_factors_tests)
 
-    if (NOT MSVC)
-        find_package(Threads REQUIRED)
-        target_link_libraries(math_tests PRIVATE Threads::Threads)
+    # 数学工具测试子目录
+    if (FACTORLIB_BUILD_MATH_TESTS)
+        add_subdirectory(tests/math_tests)
     endif()
-
-    target_include_directories(math_tests PRIVATE ${SPDLOG_INCLUDE_DIR})
-    if (FACTORLIB_ENABLE_TRACE_DEBUG)
-        target_compile_definitions(math_tests PRIVATE
-                USE_SPDLOG=1
-                SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
-        )
-    else()
-        target_compile_definitions(math_tests PRIVATE
-                USE_SPDLOG=1
-                SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
-                FACTORLIB_NO_DEBUG_TRACE=1
-        )
-    endif()
-
-    add_test(NAME math_tests COMMAND math_tests)
 endif()
 
 # ---------- E2E 测试 ----------
@@ -228,7 +207,6 @@ if (FACTORLIB_WITH_DEMO_E2E)
     target_link_libraries(run_e2e PRIVATE factor_basic factorlib_utils gtest gtest_main)
 
     if (NOT MSVC)
-        find_package(Threads REQUIRED)
         target_link_libraries(run_e2e PRIVATE Threads::Threads)
     endif()
 
@@ -238,21 +216,6 @@ if (FACTORLIB_WITH_DEMO_E2E)
     else()
         target_include_directories(run_e2e PRIVATE
                 ${CMAKE_CURRENT_LIST_DIR}/../demo_header
-        )
-    endif()
-
-    # spdlog 配置（run_e2e）
-    target_include_directories(run_e2e PRIVATE ${SPDLOG_INCLUDE_DIR})
-    if (FACTORLIB_ENABLE_TRACE_DEBUG)
-        target_compile_definitions(run_e2e PRIVATE
-                USE_SPDLOG=1
-                SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
-        )
-    else()
-        target_compile_definitions(run_e2e PRIVATE
-                USE_SPDLOG=1
-                SPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
-                FACTORLIB_NO_DEBUG_TRACE=1
         )
     endif()
 
