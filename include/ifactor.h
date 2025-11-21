@@ -22,7 +22,7 @@ namespace factorlib {
         virtual void on_tick(const CombinedTick& x) = 0;
         void on_tick(const Transaction& t) { on_tick(CombinedTick(t)); }
         void on_tick(const Entrust& e)     { on_tick(CombinedTick(e)); }
-        virtual void on_bar(const Bar& b) {}
+        virtual void on_bar(const Bar&) {}
 
         // 强制刷新接口
         virtual bool force_flush(const std::string& code) = 0;
@@ -40,8 +40,8 @@ namespace factorlib {
      */
     class BaseFactor : public IFactor {
     protected:
-        std::vector<std::string> _codes;
         std::string _name;
+        std::vector<std::string> _codes;
         // 记录已初始化过的 code，避免重复初始化
         std::unordered_set<std::string> _known_codes;
     public:
