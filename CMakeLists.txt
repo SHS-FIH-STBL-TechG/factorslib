@@ -1,5 +1,5 @@
 # 顶层 CMake 配置：生成 factorlib 库与测试可执行文件
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.10)
 
 project(factorlib LANGUAGES CXX)
 
@@ -14,8 +14,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 option(FACTORLIB_BUILD_TESTS "Build tests" ON)
 option(FACTORLIB_USE_THIRD_PARTY "Prefer bundled third_party libs" ON)
 option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
-option(FACTORLIB_WITH_DEMO_E2E "Build E2E test depending on demo_header" OFF)
-option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests (non-E2E)" ON)
+option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 # 打印所有相关选项
 message(STATUS "========== factorlib CMake options ==========")
@@ -153,41 +152,17 @@ add_library(factor_basic
         src/stat_factors/granger_causality_factor.h
         src/stat_factors/granger_causality_factor.cpp
         src/config/runtime_config.cpp
-        src/stat_factors/least_squares_info_gain_factor.h
         src/stat_factors/least_squares_info_gain_factor.cpp
         src/stat_factors/probability_momentum_factor.cpp
-
         src/stat_factors/wavelet_trend_energy_factor.cpp
-
-        src/stat_factors/wavelet_trend_energy_factor.h
-
         src/stat_factors/memory_kernel_decay_factor.cpp
-
-        src/stat_factors/memory_kernel_decay_factor.h
-
         src/stat_factors/volume_multiscale_autocorr_factor.cpp
-
-        src/stat_factors/volume_multiscale_autocorr_factor.h
-
         src/stat_factors/volume_mgf_factor.cpp
-
-        src/stat_factors/volume_mgf_factor.h
-
         src/stat_factors/hawkes_intensity_factor.cpp
-
-        src/stat_factors/hawkes_intensity_factor.h
-
         src/stat_factors/symbolic_transition_factor.cpp
-
-        src/stat_factors/symbolic_transition_factor.h
-
         src/stat_factors/pca_structure_stability_factor.cpp
-
-        src/stat_factors/pca_structure_stability_factor.h
-
         src/stat_factors/pca_angular_momentum_factor.cpp
-
-        src/stat_factors/pca_angular_momentum_factor.h
+        src/factor_factory.cpp
 )
 
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
@@ -229,27 +204,4 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     if (FACTORLIB_BUILD_MATH_TESTS)
         add_subdirectory(tests/math_tests)
     endif()
-endif()
-
-# ---------- E2E 测试 ----------
-if (FACTORLIB_WITH_DEMO_E2E)
-    enable_testing()
-
-    add_executable(run_e2e tests/integration/demo_min_e2e_test.cpp)
-    target_link_libraries(run_e2e PRIVATE factor_basic factorlib_utils gtest gtest_main)
-
-    if (NOT MSVC)
-        target_link_libraries(run_e2e PRIVATE Threads::Threads)
-    endif()
-
-    # demo_header：优先用 INTERFACE 目标，没有则直接 include 路径
-    if (TARGET demo_headers)
-        target_link_libraries(run_e2e PRIVATE demo_headers)
-    else()
-        target_include_directories(run_e2e PRIVATE
-                ${CMAKE_CURRENT_LIST_DIR}/../demo_header
-        )
-    endif()
-
-    add_test(NAME run_e2e COMMAND run_e2e)
 endif()

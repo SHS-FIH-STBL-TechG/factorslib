@@ -57,6 +57,7 @@ namespace factorlib {
     enum class CombinedKind : uint8_t { Trade = 1, Order = 2 };
 
     struct CombinedTick {
+        CombinedTick() = default;
         std::string instrument_id;   // 证券代码
         int64_t     data_time_ms{0}; // 毫秒时间戳
         uint64_t    main_seq{0};     // 业务序号

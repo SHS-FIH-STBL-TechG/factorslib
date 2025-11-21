@@ -54,6 +54,7 @@ protected:
         return series;
     }
 
+
     std::vector<double> generate_step_series(size_t n, double low, double high, size_t step_point) {
         std::vector<double> series(n, low);
         for (size_t i = step_point; i < n; ++i) {
