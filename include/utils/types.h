@@ -54,7 +54,11 @@ namespace factorlib {
 
     // === 合表逐笔 ===
     // 合并“逐笔成交 + 逐笔委托”，由 kind 标识本行是成交还是委托
-    enum class CombinedKind : uint8_t { Trade = 1, Order = 2 };
+    enum class CombinedKind : uint8_t {
+        Empty = 0,  // 空值，表示没有数据或忽略该记录
+        Order = 1,  // 委托事件，包括新增和删除
+        Trade = 3   // 交易事件
+    };
 
     struct CombinedTick {
         CombinedTick() = default;
@@ -74,7 +78,8 @@ namespace factorlib {
         // 委托专用（委托才有，成交为0）
         uint64_t    order_id{0};     // 委托编号
 
-        CombinedKind kind{CombinedKind::Trade};
+        CombinedKind kind{CombinedKind::Trade};  // 默认为交易
+
         // 允许从 Transaction 隐式转换为 CombinedTick（on_tick(t) 直接生效）
         CombinedTick(const Transaction& t) {
             instrument_id = t.instrument_id;
@@ -86,7 +91,7 @@ namespace factorlib {
             bid_no        = t.bid_no;
             ask_no        = t.ask_no;
             order_id      = 0;
-            kind          = CombinedKind::Trade;
+            kind          = CombinedKind::Trade;  // 成交类型
         }
 
         // 允许从 Entrust 隐式转换为 CombinedTick（on_tick(e) 直接生效）
@@ -100,10 +105,10 @@ namespace factorlib {
             bid_no        = 0;
             ask_no        = 0;
             order_id      = e.order_id;
-            kind          = CombinedKind::Order;
+            kind          = CombinedKind::Order;  // 委托类型
         }
-
     };
+
 
     /**
      * @brief 单个时间桶的聚合输出

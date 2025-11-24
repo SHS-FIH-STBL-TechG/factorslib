@@ -20,6 +20,7 @@
 #include "utils/databus.h"
 #include "utils/types.h"
 #include "../utils/test_config.h"
+#include "../utils/NumCountSimulation.h"
 
 using namespace factorlib;
 
@@ -33,6 +34,9 @@ static const char* TOP_TTRANS  = "zyd/tick/trans";  // 桶级成交切片主题 
 static const char* TOP_TORD    = "zyd/tick/orders"; // 桶级委托切片主题 - 每个时间桶内的所有委托记录
 static const char* TOP_ITRANS  = "zyd/interval/trans";  // interval级成交主题 - 两个相邻tick之间的成交记录
 static const char* TOP_IORD    = "zyd/interval/orders"; // interval级委托主题 - 两个相邻tick之间的委托记录
+static const char* TOP_TICK_AMOUNT  = "zyd/tick/amount";   // tick 级成交额
+static const char* TOP_TICK_VOLUME  = "zyd/tick/volume";   // tick 级成交量
+static const char* TOP_TICK_MID     = "zyd/tick/midprice"; // tick 级 midprice
 
 // 用于构造“当日毫秒”时间
 inline int64_t ms_of(int h,int m,int s,int ms){
@@ -45,8 +49,8 @@ inline int64_t ms_of(int h,int m,int s,int ms){
 class TickTransOrdersFixture : public ::testing::Test {
 protected:
     void SetUp() override {
-        TickTransOrders::register_topics(2048);
-        factor = std::make_unique<TickTransOrders>(cfg, std::vector<std::string>{code});
+            TickTransOrders::register_topics(2048);
+            factor = std::make_shared<TickTransOrders>(cfg, std::vector<std::string>{code});
     }
 
     void TearDown() override {
@@ -55,8 +59,8 @@ protected:
     }
 
     TickTransOrdersConfig cfg{500, true};
-    std::unique_ptr<TickTransOrders> factor;
-    std::string code{"SH600000"};
+    std::shared_ptr<TickTransOrders> factor;
+    std::string code{"600000"};
 };
 
 // =============== 用例 1：两个 tick 之间的切片产出 ===============
@@ -129,6 +133,29 @@ TEST_F(TickTransOrdersFixture, IntervalBetweenTicks_TransAndOrdersOnly)
     EXPECT_EQ(iv_trans.second[0].main_seq, 1u);  // 先喂入的 t1
     EXPECT_EQ(iv_trans.second[1].main_seq, 2u);  // 后喂入的 t2
     EXPECT_EQ(iv_orders.second[0].main_seq, 7u); // 委托
+
+    // --- 额外校验：tick 级别的 3 个指标（amount, volume, midprice） ---
+    auto tick_amounts = bus.get_last_n<double>(TOP_TICK_AMOUNT, code, 10);
+    auto tick_vols = bus.get_last_n<int64_t>(TOP_TICK_VOLUME, code, 10);
+    auto tick_mids = bus.get_last_n<double>(TOP_TICK_MID, code, 10);
+
+    ASSERT_FALSE(tick_amounts.empty()) << "tick amount 未发布";
+    ASSERT_FALSE(tick_vols.empty()) << "tick volume 未发布";
+    ASSERT_FALSE(tick_mids.empty()) << "tick midprice 未发布";
+
+    // 时间戳应为第二个 quote 的时间
+    EXPECT_EQ(tick_amounts.back().first, ms_of(9,30,0,500));
+    EXPECT_EQ(tick_vols.back().first, ms_of(9,30,0,500));
+    EXPECT_EQ(tick_mids.back().first, ms_of(9,30,0,500));
+
+    // 预期值计算：成交额 = 10.00*10 + 10.01*5 = 150.05
+    double expect_tick_amount = 10.00 * 10 + 10.01 * 5;
+    int64_t expect_tick_volume = static_cast<int64_t>(10 + 5);
+    double expect_tick_mid = (10.00 + 10.02) * 0.5; // 10.01
+
+    EXPECT_DOUBLE_EQ(tick_amounts.back().second, expect_tick_amount);
+    EXPECT_EQ(tick_vols.back().second, expect_tick_volume);
+    EXPECT_DOUBLE_EQ(tick_mids.back().second, expect_tick_mid);
 }
 
 TEST_F(TickTransOrdersFixture, BucketAggregation_SimpleTest)
@@ -220,15 +247,31 @@ TEST_F(TickTransOrdersFixture, BucketAggregation_BasicFunctionality)
 TEST_F(TickTransOrdersFixture, BucketAggregation_CsvFeed_Smoke) {
     auto& bus = DataBus::instance();
 
-    auto quotes = testcfg::read_quotes_from_cfg();
-    auto trans  = testcfg::read_transactions_from_cfg();
+    // 直接使用合成样本数据进行驱动测试（避免依赖外部 CSV/INI）
+    std::vector<factorlib::QuoteDepth> quotes;
+    std::vector<factorlib::Transaction> trans;
+    quotes.reserve(5);
+    trans.reserve(5);
+    for (int i = 0; i < 5; ++i) {
+        factorlib::QuoteDepth q{};
+        q.data_time_ms = ms_of(9,30,0,100 + i*100);
+        q.trading_day = 20250101;
+        q.volume = 1000 + i*100;
+        q.turnover = 10000.0 + i*1000.0;
+        q.bid_price = 10.0 + 0.01 * i;
+        q.ask_price = q.bid_price + 0.02;
+        quotes.push_back(q);
 
-    if (quotes.empty() || trans.empty()) {
-        GTEST_SKIP() << "quotes_csv / transactions_csv 未配置或为空";
+        factorlib::Transaction t{};
+        t.data_time_ms = q.data_time_ms + 20; // occur shortly after quote
+        t.main_seq = static_cast<uint64_t>(i+1);
+        t.price = q.bid_price + 0.005 * i;
+        t.side = (i % 2 == 0) ? 1 : -1;
+        t.volume = 10 + i*5;
+        trans.push_back(t);
     }
 
-    size_t n = std::min(quotes.size(), trans.size());
-    ASSERT_GE(n, 5u);
+    size_t n = 5;
 
     for (size_t i = 0; i < n; ++i) {
         auto q = quotes[i];
@@ -258,10 +301,10 @@ TEST_F(TickTransOrdersFixture, BucketAggregation_CsvFeed_Smoke) {
     auto ttrans = bus.get_last_n<std::vector<Transaction>>(TOP_TTRANS, code, 10);
     auto tord   = bus.get_last_n<std::vector<Entrust>>(TOP_TORD, code, 10);
 
-    ASSERT_FALSE(amount.empty()) << "CSV 喂数后应有金额聚合产出";
-    ASSERT_FALSE(volume.empty()) << "CSV 喂数后应有成交量聚合产出";
-    ASSERT_FALSE(mid.empty())    << "CSV 喂数后应有中间价聚合产出";
-    ASSERT_FALSE(ttrans.empty()) << "CSV 喂数后应有逐笔成交聚合产出";
+    ASSERT_FALSE(amount.empty()) << "样本喂数后应有金额聚合产出";
+    ASSERT_FALSE(volume.empty()) << "样本喂数后应有成交量聚合产出";
+    ASSERT_FALSE(mid.empty())    << "样本喂数后应有中间价聚合产出";
+    ASSERT_FALSE(ttrans.empty()) << "样本喂数后应有逐笔成交聚合产出";
 
     // interval 两个主题在 fixture 配置中 emit_tick_interval=true
     auto ivt = bus.get_last_n<std::vector<Transaction>>(TOP_INTERVAL_TRANS, code, 10);
@@ -270,4 +313,106 @@ TEST_F(TickTransOrdersFixture, BucketAggregation_CsvFeed_Smoke) {
     // 因为我们喂了多条 quote/tick，至少应有一条 interval 切片
     EXPECT_FALSE(ivt.empty());
     EXPECT_FALSE(ivo.empty());
+}
+
+// ============== 新增用例：使用 NumCountSimulation 的烟雾测试 ==============
+// 目的：验证测试辅助类可以被构造并初始化（不会 crash），为后续基于外部输入的集成测试做准备。
+TEST_F(TickTransOrdersFixture, NumCountSimulation_InitFinish_Smoke)
+{
+    NumCountSimulation sim;
+    // Init 返回 0 表示成功（按实现），这里检查 Init() 可被调用，并把因子注册到 ingress
+    EXPECT_EQ(sim.Init(std::vector<std::shared_ptr<factorlib::IFactor>>{factor}), 0);
+
+    // 结束时调用 Finish，确保能正常销毁/清理（无返回值，主要防止崩溃）
+    sim.Finish();
+}
+
+
+// ============== 新增用例：使用 NumCountSimulation 驱动并校验计算值 ==============
+TEST_F(TickTransOrdersFixture, NumCountSimulation_FeedsFactor_Computation)
+{
+    auto& bus = DataBus::instance();
+    NumCountSimulation sim;
+    EXPECT_EQ(sim.Init(std::vector<std::shared_ptr<factorlib::IFactor>>{factor}), 0);
+
+    // 1) 发送第一个 quote (作为上一个 tick)
+    factorlib::QuoteDepth q1{};
+    q1.instrument_id = code;
+    q1.trading_day = 20250101;
+    q1.data_time_ms = ms_of(9,30,0,0);
+    q1.volume = 100;
+    q1.turnover = 1000.0;
+    q1.bid_price = 9.99;
+    q1.ask_price = 10.01;
+    sim.SimulateSnapSHData({q1});
+
+    // 2) 在两个 quote 之间发送两笔成交和一笔委托
+    factorlib::CombinedTick ct1{}; // trade 1
+    ct1.instrument_id = code;
+    ct1.data_time_ms = ms_of(9,30,0,120);
+    ct1.main_seq = 1;
+    ct1.price = 10.00; ct1.side = 1; ct1.volume = 10;
+    ct1.kind = factorlib::CombinedKind::Trade;
+
+    factorlib::CombinedTick ct2{}; // trade 2
+    ct2.instrument_id = code;
+    ct2.data_time_ms = ms_of(9,30,0,150);
+    ct2.main_seq = 2;
+    ct2.price = 10.01; ct2.side = -1; ct2.volume = 5;
+    ct2.kind = factorlib::CombinedKind::Trade;
+
+    factorlib::CombinedTick ce1{}; // entrust
+    ce1.instrument_id = code;
+    ce1.data_time_ms = ms_of(9,30,0,130);
+    ce1.main_seq = 7;
+    ce1.price = 10.01; ce1.side = -1; ce1.volume = 5; ce1.order_id = 11111;
+    ce1.kind = factorlib::CombinedKind::Order;
+
+    sim.SimulateOntData({ct1, ct2, ce1});
+
+    // 3) 发送第二个 quote（作为本次 tick 的结束），触发 tick-interval 发布
+    factorlib::QuoteDepth q2{};
+    q2.instrument_id = code;
+    q2.trading_day = 20250101;
+    q2.data_time_ms = ms_of(9,30,0,500);
+    q2.volume = 140;
+    q2.turnover = 1400.0;
+    q2.bid_price = 10.00;
+    q2.ask_price = 10.02;
+    sim.SimulateSnapSHData({q2});
+
+    // 检查 interval topics
+    auto ivt = bus.get_last_n<std::vector<factorlib::Transaction>>(TOP_INTERVAL_TRANS, code, 10);
+    auto ivo = bus.get_last_n<std::vector<factorlib::Entrust>>(TOP_INTERVAL_ORDERS, code, 10);
+
+    ASSERT_FALSE(ivt.empty()) << "No interval transaction data published";
+    ASSERT_FALSE(ivo.empty()) << "No interval order data published";
+
+    auto iv_trans = ivt.back();
+    auto iv_orders = ivo.back();
+
+    EXPECT_EQ(iv_trans.first, ms_of(9,30,0,500));
+    EXPECT_EQ(iv_orders.first, ms_of(9,30,0,500));
+
+    ASSERT_EQ(iv_trans.second.size(), 2u);
+    ASSERT_EQ(iv_orders.second.size(), 1u);
+
+    // 校验 tick 级 amount/volume/midprice
+    auto tick_amounts = bus.get_last_n<double>("zyd/tick/amount", code, 10);
+    auto tick_vols = bus.get_last_n<int64_t>("zyd/tick/volume", code, 10);
+    auto tick_mids = bus.get_last_n<double>("zyd/tick/midprice", code, 10);
+
+    ASSERT_FALSE(tick_amounts.empty());
+    ASSERT_FALSE(tick_vols.empty());
+    ASSERT_FALSE(tick_mids.empty());
+
+    // 预期成交额 = 10.00*10 + 10.01*5 = 100 + 50.05 = 150.05
+    double expect_amount = 10.00 * 10 + 10.01 * 5;
+    EXPECT_DOUBLE_EQ(tick_amounts.back().second, expect_amount);
+    EXPECT_EQ(tick_vols.back().second, static_cast<int64_t>(10 + 5));
+
+    // midprice 使用最后一个 quote 的 mid = (10.00 + 10.02)/2 = 10.01
+    EXPECT_DOUBLE_EQ(tick_mids.back().second, 10.01);
+
+    sim.Finish();
 }

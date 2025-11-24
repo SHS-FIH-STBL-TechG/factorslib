@@ -26,4 +26,9 @@ void ingest_snapshot_sz(const std::vector<std_SnapshotStockSZ>& v);
 void ingest_ont(const std::vector<std_OrdAndExeInfo>& v);
 void ingest_kline(const std::vector<std_BasicandEnhanceKLine>& v);
 
+// Overloads for tests: accept already-converted types and dispatch to registered factors.
+void ingest_snapshot_sh(const std::vector<factorlib::QuoteDepth>& v);
+void ingest_snapshot_sz(const std::vector<factorlib::QuoteDepth>& v);
+void ingest_ont(const std::vector<factorlib::CombinedTick>& v);
+
 } // namespace factorlib::bridge

@@ -130,7 +130,7 @@ add_library(factorlib_utils
         include/math/incremental_rank.h
         include/utils/config/feed_mode.h
         include/math/sliding_normal_eq.h
-        # 注意：已去掉 math_utils.cpp
+        tests/utils/NumCountSimulation.cpp
 )
 
 # 对外暴露工程内头文件（第三方已经通过全局 include_directories 提供）
@@ -181,6 +181,8 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/factor_compute_test.cpp
             tests/utils/test_config.h
             tests/utils/test_config.cpp
+            tests/utils/NumCountSimulation.cpp
+            tests/utils/NumCountSimulation.h
     )
 
     add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)

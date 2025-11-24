@@ -46,4 +46,23 @@ namespace factorlib::bridge {
         }
     }
 
+    // Overloads for already-converted types (used by tests to avoid dependency on external SDK types)
+    void ingest_snapshot_sh(const std::vector<factorlib::QuoteDepth>& v) {
+        for (const auto& q : v) {
+            for (auto& f : g_factors) f->on_quote(q);
+        }
+    }
+
+    void ingest_snapshot_sz(const std::vector<factorlib::QuoteDepth>& v) {
+        for (const auto& q : v) {
+            for (auto& f : g_factors) f->on_quote(q);
+        }
+    }
+
+    void ingest_ont(const std::vector<factorlib::CombinedTick>& v) {
+        for (const auto& t : v) {
+            for (auto& f : g_factors) f->on_tick(t);
+        }
+    }
+
 } // namespace factorlib::bridge
