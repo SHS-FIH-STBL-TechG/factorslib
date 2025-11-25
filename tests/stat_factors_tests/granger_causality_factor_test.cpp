@@ -212,40 +212,6 @@ TEST(GrangerCausality, WindowRoll_Consistency) {
     EXPECT_GT(s2, 5.0);
 }
 
-// ============== 用例 5：聚合路径冒烟（ensure_bucket/force_flush） ==============
-TEST(GrangerCausality, AggregatedPath_Smoke) {
-    BusGuard _guard;
-    GrangerCausalityFactor::register_topics(1024);
-
-    GrangerConfig cfg;
-    cfg.feed_mode    = config::FeedMode::Aggregated; // 走聚合路径
-    cfg.bucket_ms    = 1000;
-    cfg.window_size  = 64;
-    cfg.p_lags       = 1;
-    cfg.q_lags       = 1;
-    cfg.min_effective= 8;
-    cfg.publish_raw_p= true;
-    cfg.use_neglog10 = false;
-    GrangerCausalityFactor factor({ "A" }, cfg);
-
-    const std::string code = "A";
-    double mid = 50.0;
-    // 送 5 个桶
-    for (int b=0; b<10; ++b) {
-        int64_t t0 = ms_of(9,30,0, b*1000);
-        // 桶内下委托（OFI>0）
-        for (int k=0;k<10;++k) {
-            feed_order(factor, code, t0 + k*50, +1, 100);
-        }
-        // 桶尾送一条 quote（聚合器在 close_bucket_and_push_ 里取 midprice_last）
-        mid += 0.5; feed_quote(factor, code, t0 + 999, mid);
-        // 强制冲桶
-        (void)factor.force_flush(code);
-    }
-    double p=1.0;
-    ASSERT_TRUE(last_pval(code, p)); // 有产出即可
-}
-
 // 黄金值校验：与因子输出逐样比对（ARX(1,1)，逐条事件）
 TEST(GrangerCausality, GoldenCheck_WithEigen) {
     DataBus::instance().reset();
@@ -357,63 +323,4 @@ TEST(GrangerCausality, GoldenCheck_WithEigen) {
     // —— 与因子输出比对 ——
     ASSERT_TRUE(std::isfinite(p_gold));
     EXPECT_NEAR(p_factor, p_gold, 1e-8);
-}
-
-// ============== 用例：CSV 驱动聚合路径冒烟测试 ==============
-TEST(GrangerCausality, CsvFeed_Smoke) {
-    BusGuard _guard;
-    GrangerCausalityFactor::register_topics(2048);
-
-    // 尝试从 CSV 读取 Bar 和 Quote
-    auto bars   = testcfg::read_bars_from_cfg();
-    auto quotes = testcfg::read_quotes_from_cfg();
-
-    if (bars.empty() || quotes.empty()) {
-        GTEST_SKIP() << "bars_csv / quotes_csv 未配置，跳过 CsvFeed_Smoke";
-    }
-
-    const std::string code = bars[0].instrument_id;
-
-    GrangerConfig cfg;
-    cfg.feed_mode     = config::FeedMode::Aggregated;
-    cfg.bucket_ms     = 1000;   // 1 秒桶
-    cfg.window_size   = 30;
-    cfg.p_lags        = 1;
-    cfg.q_lags        = 1;
-    cfg.min_effective = 8;
-    cfg.publish_raw_p = true;
-    cfg.use_neglog10  = false;
-
-    GrangerCausalityFactor factor({ code }, cfg);
-
-    // 简单策略：
-    // - 用 Bar 的 close 作为因变量 y_t；
-    // - 用 Quote 的 mid(mid_price ≈ (bid+ask)/2) 作为自变量 x_t；
-    // - 时间顺序以各自 data_time_ms 为准，每条都喂给 factor。
-    size_t n = std::min(bars.size(), quotes.size());
-    ASSERT_GE(n, 40u) << "CSV 行数太少，至少需要 40 行";
-
-    for (size_t i = 0; i < n; ++i) {
-        auto q = quotes[i];
-        q.instrument_id = code;
-        factor.on_quote(q);
-
-        auto b = bars[i];
-        b.instrument_id = code;
-        factor.on_bar(b);
-    }
-
-    double strength = 0.0;
-    int64_t ts = 0;
-    ASSERT_TRUE(last_strength(code, strength, &ts))
-        << "CSV 聚合路径下应至少产出一次强度因子";
-
-    // 这里只做数值合法性检查，不强行约束“因果强/弱”——因为 CSV 是合成行情，但不一定满足
-    EXPECT_FALSE(std::isnan(strength));
-    EXPECT_FALSE(std::isinf(strength));
-
-    double p = 1.0;
-    ASSERT_TRUE(last_pval(code, p, &ts)) << "应产出对应 p 值";
-    EXPECT_GE(p, 0.0);
-    EXPECT_LE(p, 1.0);
 }

@@ -7,17 +7,52 @@
 #include "../config/runtime_config.h"
 #include "utils/config_utils.h"
 #include "utils/trading_time.h"
+
+/**
+ * @file granger_causality_factor.cpp
+ *
+ * 格兰杰因果强度因子说明：
+ * -----------------------------------------
+ * 1. 因子背景
+ *    - 目标是检验“订单流不平衡 OFI 是否格兰杰导致中间价变化”；
+ *    - 维护前视/后视两个线性回归模型：
+ *          Restricted  : y_t = β0 + ∑_{i=1}^p β_i y_{t-i}
+ *          Unrestricted: y_t = β0 + ∑_{i=1}^p β_i y_{t-i} + ∑_{j=1}^q γ_j x_{t-j}
+ *    - 通过比较 RSSr/RSSu 构造 F 统计量，再得到 p 值；
+ *    - p 值越小，说明 OFI 对价格变动的解释力越强。可选发布 -log10(p) 作为“强度”。
+ *
+ * 2. 事件流程
+ *    - on_tick(Entrust)：累加 pending_ofi（买加卖减）；
+ *    - on_quote：计算当前 mid price，并与上一笔 mid 形成 y_t；
+ *    - emit_sample_event_driven_：当滑窗足够长时，收集 {y_t, y_lags, x_lags} 推入 OLS；
+ *    - push_sample_and_update_：求解 Restricted / Unrestricted，计算 F/p 并发布；
+ *    - force_flush 在逐条模式下无意义，固定返回 false。
+ *
+ * 3. 配置来源（runtime_config.ini -> [granger]）
+ *    - window_size / window_sizes     ：滑窗大小，可多窗并行；
+ *    - p_lags / q_lags               ：自变量/因变量滞后阶数；
+ *    - min_effective                 ：最小有效样本数；
+ *    - use_neglog10 / strength_clip  ：-log10(p) 及裁剪控制；
+ *    - publish_raw_p                 ：是否同时发布原始 p 值。
+ *
+ * 4. 实现要点
+ *    - 每个 ScopeKey(code|freq|window) 拥有独立的 CodeState，保证多窗口隔离；
+ *    - 通过 SlidingNormalEq 增量维护 OLS，既能滑窗退样，又保持数值稳定；
+ *    - p 值/强度发布到固定主题，便于下游读取；
+ *    - 日志记录 N/F/RSS 等信息，便于调试。
+ */
 using factorlib::config::RC;
 namespace factorlib {
 
     using Vec = Eigen::VectorXd;
 
+    // CodeState 用于缓存每个 scope（code|freq|window）的回归器/滑窗信息，
+    // 构造时即根据配置初始化受限模型（ne_r）与完整模型（ne_u）的维度。
     GrangerCausalityFactor::CodeState::CodeState(const GrangerConfig& cfg, int window)
         : d_r(1 + std::max(0, cfg.p_lags))
         , d_u(1 + std::max(0, cfg.p_lags) + std::max(0, cfg.q_lags))
         , ne_r(d_r, window)
         , ne_u(d_u, window)
-        , bucket(cfg.bucket_ms)
         , window_size(window) {}
 
     // ===== 构造 / 注册 =====
@@ -25,36 +60,30 @@ namespace factorlib {
                                                    const GrangerConfig& cfg)
         : BaseFactor("GrangerCausalityStrength", codes)
         , _cfg(cfg) {
-        // —— 运行时覆盖（仅当 INI 中存在对应键时才会改变默认/入参值）——
+        // —— 运行时覆盖：与 gaussian_copula_factor.cpp 同样的模式，支持运行时热切自定义参数 ——
         _cfg.window_size   = RC().geti ("granger.window_size",   _cfg.window_size);
         _cfg.p_lags        = RC().geti ("granger.p_lags",        _cfg.p_lags);
         _cfg.q_lags        = RC().geti ("granger.q_lags",        _cfg.q_lags);
         _cfg.min_effective = RC().geti ("granger.min_effective", _cfg.min_effective);
 
-        // 聚合模式相关（你在 ensure_code_ 里会用到）
-        _cfg.bucket_ms     = RC().geti64("granger.bucket_ms",    _cfg.bucket_ms);
-
-        // 发布/数值处理相关
+        // —— 发布相关：是否输出 -log10(p)、强度裁剪上限等 —— 
         _cfg.use_neglog10  = RC().getb ("granger.use_neglog10",  _cfg.use_neglog10);
         _cfg.strength_clip = RC().getd ("granger.strength_clip", _cfg.strength_clip);
-        _window_sizes = factorlib::config::load_window_sizes("granger", _cfg.window_size);
+        _window_sizes      = factorlib::config::load_window_sizes("granger", _cfg.window_size);
         clamp_window_list(_window_sizes, "[granger] window_sizes");
         auto freq_cfg = factorlib::config::load_time_frequencies("granger");
         if (!freq_cfg.empty()) {
             clamp_frequency_list(freq_cfg, "[granger] time_frequencies");
             set_time_frequencies_override(freq_cfg);
         }
-
-        //选择数据来源
-        const std::string fm = RC().get("granger.feed_mode", "");
-        if (fm == "aggregated") _cfg.feed_mode = config::FeedMode::Aggregated;
-        else if (fm == "event") _cfg.feed_mode = config::FeedMode::EventDriven;
-        _window_sizes = factorlib::config::load_window_sizes("granger", _cfg.window_size);
     }
 
 
     void GrangerCausalityFactor::register_topics(size_t capacity) {
         auto& bus = DataBus::instance();
+        // 在任何实例创建之前完成主题注册：
+        // TOP_GRANGER_STRENGTH：根据配置发布 -log10(p) 或原始 p；
+        // TOP_GRANGER_PVAL    ：始终保留原始 p 值，方便调试/监控。
         bus.register_topic<double>(TOP_GRANGER_STRENGTH, capacity);
         bus.register_topic<double>(TOP_GRANGER_PVAL,     capacity); // 仅注册，不强制发布
     }
@@ -109,25 +138,8 @@ namespace factorlib {
     }
 
 
-    // ===== 强制冲桶（仅聚合模式有意义） =====
+    // ===== 强制冲桶（事件驱动模式下恒为 false）=====
     bool GrangerCausalityFactor::force_flush(const std::string& code) {
-        auto scoped = code;
-        auto scope = parse_scope_code(code);
-        auto it = _states.find(scoped);
-        if (it == _states.end()) {
-            scoped = scope.as_bus_code();
-            it = _states.find(scoped);
-        }
-        if (it == _states.end()) return false;
-        if (_cfg.feed_mode == config::FeedMode::Aggregated) {
-            BucketOutputs out{};
-            if (it->second.bucket.force_flush(out)) {
-                close_bucket_and_push_(scope, out);
-                it->second.last_bucket_ts = out.bucket_end_ms;
-                return true;
-            }
-            return false;
-        }
         return false;
     }
 
@@ -142,7 +154,7 @@ namespace factorlib {
         return it->second;
     }
 
-    // ===== 内部：统一事件入口（分为 聚合 / 逐条） =====
+    // ===== 内部：统一事件入口（逐条模式） =====
     void GrangerCausalityFactor::on_any_event_(const ScopeKey& scope, int64_t ts_ms,
                                                const std::optional<QuoteDepth>& qopt,
                                                const std::optional<Transaction>& topt,
@@ -150,20 +162,7 @@ namespace factorlib {
         auto& S = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 
-        // ---------- 路径一：聚合模式 ----------
-        if (_cfg.feed_mode == config::FeedMode::Aggregated) {
-            BucketOutputs out{};
-            if (S.bucket.ensure_bucket(ts_ms, out)) {
-                close_bucket_and_push_(scope, out);
-                S.last_bucket_ts = out.bucket_end_ms;
-            }
-            if (qopt) S.bucket.on_quote(*qopt);
-            if (topt) S.bucket.on_transaction(*topt);
-            if (eopt) S.bucket.on_entrust(*eopt);
-            return;
-        }
-
-        // ---------- 路径二：逐条模式 ----------
+        // ---------- 逐条模式 ----------
         if (eopt) {
             const auto& e = *eopt;
             S.pending_ofi += (e.side > 0 ? (double)e.volume : -(double)e.volume);
@@ -182,39 +181,6 @@ namespace factorlib {
                 S.last_mid = mid_now;
             }
         }
-    }
-
-    // ===== 内部：聚合模式收拢桶 -> 产出样本 =====
-    void GrangerCausalityFactor::close_bucket_and_push_(const ScopeKey& scope,
-                                                        const BucketOutputs& bkt) {
-        auto& S = ensure_state(scope);
-        const std::string scoped_code = scope.as_bus_code();
-
-        double mid_now = bkt.midprice_last;
-        if (!(mid_now > 0)) return;
-
-        double y_t = 0.0;
-        if (S.last_mid.has_value()) y_t = mid_now - *S.last_mid;
-        S.last_mid = mid_now;
-
-        long long buy_vol = 0, sell_vol = 0;
-        for (const auto& ord : bkt.orders) {
-            if (ord.side > 0) buy_vol += (long long)ord.volume;
-            else              sell_vol += (long long)ord.volume;
-        }
-        double x_t = (double)(buy_vol - sell_vol);
-
-        S.x_win.push_back(x_t);
-        S.y_win.push_back(y_t);
-        while ((int)S.x_win.size() > S.window_size) S.x_win.pop_front();
-        while ((int)S.y_win.size() > S.window_size) S.y_win.pop_front();
-
-        if ((int)S.y_win.size() <= std::max(_cfg.p_lags, _cfg.q_lags)) return;
-        std::vector<double> y_lags(_cfg.p_lags), x_lags(_cfg.q_lags);
-        for (int i=0;i<_cfg.p_lags;++i) y_lags[i] = S.y_win[(int)S.y_win.size()-1 - (i+1)];
-        for (int j=0;j<_cfg.q_lags;++j) x_lags[j] = S.x_win[(int)S.x_win.size()-1 - (j+1)];
-
-        push_sample_and_update_(scope, bkt.bucket_end_ms, y_t, y_lags, x_lags);
     }
 
     // ===== 内部：逐条模式在 mid 刷新时产出样本 =====
