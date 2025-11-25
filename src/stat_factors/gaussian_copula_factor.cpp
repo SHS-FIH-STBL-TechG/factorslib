@@ -12,6 +12,39 @@
 #include "math/statistics.h"
 #include "utils/config_utils.h"
 
+/**
+ * @file gaussian_copula_factor.cpp
+ *
+ * 高斯 Copula 条件期望因子说明：
+ * -----------------------------------------
+ * 1. 因子背景
+ *    - 同时跟踪 OFI（订单流不平衡）、成交量、对数收益三条序列；
+ *    - 通过增量秩计算器把每条序列映射为 [0,1] 分位，再转为 N(0,1) 正态得分；
+ *    - 在正态得分空间中维护三维协方差矩阵，并基于 Copula 计算条件期望；
+ *    - 预测结果经过经验 CDF 逆变换，回到真实收益刻度，在 DataBus 上输出。
+ *
+ * 2. 计算流程
+ *    - on_tick(Entrust)：累加当前撮合周期的 OFI/Volume；
+ *    - on_quote：计算 log return，并将 (OFI, Volume, Return) 推入 IncrementalState；
+ *        * 秩窗口与协方差窗口同步滚动，复杂度 O(log N)；
+ *        * 窗口未满仅做累积，满窗后即可计算条件期望；
+ *    - compute_conditional_expectation_incremental：
+ *        * 使用协方差均值 + 正则化 Σ，计算 E[Z_ret | Z_ofi, Z_vol]；
+ *        * 将条件正态结果映射为概率，再用 return 样本做经验逆 CDF 得到预测收益。
+ *
+ * 3. 配置来源（runtime_config.ini -> [gaussian]）
+ *        - window_size/window_sizes ：支持多窗口并行；
+ *        - time_frequencies        ：可选的多频率运行；
+ *        - regularization          ：对 Σ 加对角线，提升数值稳定性；
+ *      其余频率/窗口上限由 BaseFactor 负责夹紧。
+ *
+ * 4. 设计要点
+ *        - 使用 ScopeKey = code|freq|window 作为状态键，确保多窗口互不干扰；
+ *        - 增量秩 + 协方差均衡了排序鲁棒性与实时性，适合长窗口；
+ *        - force_flush 允许外部在窗口满时强制输出（需传入 scope code）；
+ *        - 日志中详细记录窗口初始化、未满提醒及强制刷新过程，便于排障。
+ */
+
 using factorlib::config::RC;
 namespace factorlib {
 
