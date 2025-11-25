@@ -6,7 +6,6 @@
 
 #include "../config/runtime_config.h"
 #include "utils/config_utils.h"
-#include "utils/config_utils.h"
 #include "utils/trading_time.h"
 using factorlib::config::RC;
 namespace factorlib {
@@ -39,8 +38,12 @@ namespace factorlib {
         _cfg.use_neglog10  = RC().getb ("granger.use_neglog10",  _cfg.use_neglog10);
         _cfg.strength_clip = RC().getd ("granger.strength_clip", _cfg.strength_clip);
         _window_sizes = factorlib::config::load_window_sizes("granger", _cfg.window_size);
+        clamp_window_list(_window_sizes, "[granger] window_sizes");
         auto freq_cfg = factorlib::config::load_time_frequencies("granger");
-        if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+        if (!freq_cfg.empty()) {
+            clamp_frequency_list(freq_cfg, "[granger] time_frequencies");
+            set_time_frequencies_override(freq_cfg);
+        }
 
         //选择数据来源
         const std::string fm = RC().get("granger.feed_mode", "");
@@ -69,7 +72,7 @@ namespace factorlib {
     // ===== IFactor 事件入口 =====
     void GrangerCausalityFactor::on_quote(const QuoteDepth& q) {
         BaseFactor::ensure_code(q.instrument_id);
-        for_each_scope(q.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+        for_each_scope(q.instrument_id, _window_sizes, q.data_time_ms, [&](const ScopeKey& scope) {
             on_any_event_(scope, q.data_time_ms, q, std::nullopt, std::nullopt);
         });
     }
@@ -86,7 +89,7 @@ namespace factorlib {
             t.bid_no        = x.bid_no;
             t.ask_no        = x.ask_no;
             BaseFactor::ensure_code(t.instrument_id);
-            for_each_scope(t.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+            for_each_scope(t.instrument_id, _window_sizes, t.data_time_ms, [&](const ScopeKey& scope) {
                 on_any_event_(scope, t.data_time_ms, std::nullopt, t, std::nullopt);
             });
         } else {
@@ -99,7 +102,7 @@ namespace factorlib {
             e.volume        = x.volume;
             e.order_id      = x.order_id;
             BaseFactor::ensure_code(e.instrument_id);
-            for_each_scope(e.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+            for_each_scope(e.instrument_id, _window_sizes, e.data_time_ms, [&](const ScopeKey& scope) {
                 on_any_event_(scope, e.data_time_ms, std::nullopt, std::nullopt, e);
             });
         }

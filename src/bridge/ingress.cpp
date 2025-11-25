@@ -17,7 +17,7 @@ namespace factorlib::bridge {
         g_factors = factors;
     }
 
-    void set_time_frequencies(const std::vector<int>& freqs) {
+    void set_time_frequencies(const std::vector<int64_t>& freqs) {
         // demo 层可以在初始化时调用此函数，把“计算频率轴”注入给所有因子
         factorlib::set_time_frequencies(freqs);
     }

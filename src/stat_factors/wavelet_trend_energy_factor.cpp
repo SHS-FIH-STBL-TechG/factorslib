@@ -50,8 +50,12 @@ WaveletTrendEnergyFactor::WaveletTrendEnergyFactor(
 
     _cfg.wavelet    = RC().get("wave_trend.wavelet",    _cfg.wavelet);
     _window_sizes   = factorlib::config::load_window_sizes("wave_trend", _cfg.window_size);
+    clamp_window_list(_window_sizes, "[wave_trend] window_sizes");
     auto freq_cfg   = factorlib::config::load_time_frequencies("wave_trend");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[wave_trend] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 }
 
 // =====================[ DataBus topic 注册 ]=====================
@@ -93,7 +97,7 @@ void WaveletTrendEnergyFactor::on_price_event(const std::string& code_raw,
     if (!(price > 0.0)) return;
 
     ensure_code(code_raw);
-    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
         auto& st = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 

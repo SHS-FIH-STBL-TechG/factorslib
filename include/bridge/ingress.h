@@ -1,6 +1,7 @@
 // include/factorlib/bridge/ingress.h
 #pragma once
 #include <vector>
+#include <cstdint>
 #include <memory>
 #include "ifactor.h"
 
@@ -19,8 +20,8 @@ namespace factorlib::bridge {
 
 // 程序启动时注册因子集合（demo 初始化时调用一次）
 void set_factors(const std::vector<std::shared_ptr<factorlib::IFactor>>& factors);
-// 设置时间频率（可多档）；默认 {1}，可在 demo 启动时调用覆盖
-void set_time_frequencies(const std::vector<int>& freqs);
+// 设置时间频率（可多档）；默认 {1ms}，可在 demo 启动时调用覆盖
+void set_time_frequencies(const std::vector<int64_t>& freqs);
 
 // demo 的回调一行调用
 void ingest_snapshot_sh(const std::vector<std_SnapshotStockSH>& v);

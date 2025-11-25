@@ -9,6 +9,7 @@
 #include "utils/types.h"
 #include "utils/processing_axes.h"
 #include "utils/scope_key.h"
+#include "utils/log.h"
 
 namespace factorlib {
 
@@ -49,26 +50,30 @@ namespace factorlib {
         std::vector<std::string> _codes;
         // 记录已初始化过的 code，避免重复初始化
         std::unordered_set<std::string> _known_codes;
-        std::vector<int> _custom_freqs;
+        std::vector<int64_t> _custom_freqs;
 
         struct FrequencyState {
-            int frequency{1};
-            uint64_t counter{0};
+            int64_t period_ms{1};
+            int64_t last_ts{-1};
         };
 
         // 针对每个 code 维护各频率的计数器，避免每次事件都重新构造
         std::unordered_map<std::string, std::vector<FrequencyState>> _freq_states;
 
+        static constexpr size_t kMaxWindowOptions = 8;
+        static constexpr size_t kMaxFrequencyOptions = 8;
+
         template<typename Fn>
         void for_each_scope(const std::string& code,
                             const std::vector<int>& windows,
+                            int64_t ts_ms,
                             Fn&& fn) {
             auto& freq_states = _freq_states[code];
             const auto& configured = _custom_freqs.empty() ? get_time_frequencies() : _custom_freqs;
             bool mismatch = freq_states.size() != configured.size();
             if (!mismatch) {
                 for (size_t i = 0; i < configured.size(); ++i) {
-                    if (freq_states[i].frequency != configured[i]) {
+                    if (freq_states[i].period_ms != configured[i]) {
                         mismatch = true;
                         break;
                     }
@@ -78,8 +83,8 @@ namespace factorlib {
                 // 频率配置发生变化时，重新同步本地缓存，确保热更新生效
                 freq_states.clear();
                 freq_states.reserve(configured.size());
-                for (int f : configured) {
-                    freq_states.push_back(FrequencyState{f, 0});
+                for (auto period : configured) {
+                    freq_states.push_back(FrequencyState{period, -1});
                 }
             }
             if (freq_states.empty()) return;
@@ -93,11 +98,16 @@ namespace factorlib {
             }
 
             for (auto& fs : freq_states) {
-                fs.counter++;
-                // 频率 N 表示“每 N 条事件触发一次”，非触发周期直接跳过
-                if (fs.frequency > 1 && (fs.counter % fs.frequency) != 0) continue;
+                bool allow = true;
+                if (fs.period_ms > 1 && ts_ms >= 0) {
+                    if (fs.last_ts >= 0 && (ts_ms - fs.last_ts) < fs.period_ms) {
+                        allow = false;
+                    }
+                }
+                if (!allow) continue;
+                if (ts_ms >= 0) fs.last_ts = ts_ms;
                 for (int window : *window_ptr) {
-                    ScopeKey scope{code, fs.frequency, window};
+                    ScopeKey scope{code, fs.period_ms, window};
                     fn(scope);
                 }
             }
@@ -129,10 +139,26 @@ namespace factorlib {
          */
         virtual void on_code_added(const std::string& /*code*/) {}
 
+        template<typename T>
+        void clamp_list_size(std::vector<T>& values, size_t max_count, const char* label) const {
+            if (max_count == 0 || values.size() <= max_count) return;
+            LOG_WARN("{}: 配置数量 {} 超过上限 {}，仅保留前 {} 项",
+                     label ? label : "配置", values.size(), max_count, max_count);
+            values.resize(max_count);
+        }
+
+        void clamp_window_list(std::vector<int>& windows, const char* label) const {
+            clamp_list_size(windows, kMaxWindowOptions, label);
+        }
+
+        void clamp_frequency_list(std::vector<int64_t>& freqs, const char* label) const {
+            clamp_list_size(freqs, kMaxFrequencyOptions, label);
+        }
+
         /// @brief 为当前因子设置自定义频率列表（如配置中指定了 time_frequencies）
-        void set_time_frequencies_override(std::vector<int> freqs) {
+        void set_time_frequencies_override(std::vector<int64_t> freqs) {
             freqs.erase(std::remove_if(freqs.begin(), freqs.end(),
-                                       [](int f) { return f <= 0; }),
+                                       [](int64_t f) { return f <= 0; }),
                         freqs.end());
             if (freqs.empty()) {
                 _custom_freqs.clear();
@@ -140,6 +166,7 @@ namespace factorlib {
             }
             std::sort(freqs.begin(), freqs.end());
             freqs.erase(std::unique(freqs.begin(), freqs.end()), freqs.end());
+            clamp_frequency_list(freqs, "time_frequencies");
             _custom_freqs = std::move(freqs);
         }
     };

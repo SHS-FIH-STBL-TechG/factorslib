@@ -39,7 +39,10 @@ PcaStructureStabilityFactor::PcaStructureStabilityFactor(
     if (_cfg.warmup < 8) _cfg.warmup = 8;
     _window_sizes = {0};
     auto freq_cfg = factorlib::config::load_time_frequencies("pca_stab");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[pca_stab] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 }
 
 // =====================[ topic 注册 ]=====================
@@ -96,7 +99,7 @@ void PcaStructureStabilityFactor::on_price_event(const std::string& code_raw,
     if (!(b.close > 0.0)) return;
 
     ensure_code(code_raw);
-    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
         auto& st = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 

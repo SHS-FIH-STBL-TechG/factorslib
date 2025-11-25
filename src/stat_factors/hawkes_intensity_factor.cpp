@@ -15,7 +15,10 @@ HawkesIntensityFactor::HawkesIntensityFactor(const std::vector<std::string>& cod
     _cfg.dt    = RC().getd("hawkes.dt",    _cfg.dt);
     _window_sizes = {0};
     auto freq_cfg = factorlib::config::load_time_frequencies("hawkes");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[hawkes] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 }
 
 HawkesIntensityFactor::CodeState& HawkesIntensityFactor::ensure_state(const ScopeKey& scope) {
@@ -30,7 +33,7 @@ HawkesIntensityFactor::CodeState& HawkesIntensityFactor::ensure_state(const Scop
 
 void HawkesIntensityFactor::on_tick(const CombinedTick& x) {
     ensure_code(x.instrument_id);
-    for_each_scope(x.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(x.instrument_id, _window_sizes, x.data_time_ms, [&](const ScopeKey& scope) {
         auto& st = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
         double lambda = 0.0;

@@ -12,8 +12,12 @@ SymbolicTransitionFactor::SymbolicTransitionFactor(const std::vector<std::string
     _cfg.window_size = RC().geti("symbolic.window_size", _cfg.window_size);
     _cfg.symbols_k   = RC().geti("symbolic.symbols_k",   _cfg.symbols_k);
     _window_sizes    = factorlib::config::load_window_sizes("symbolic", _cfg.window_size);
+    clamp_window_list(_window_sizes, "[symbolic] window_sizes");
     auto freq_cfg = factorlib::config::load_time_frequencies("symbolic");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[symbolic] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 }
 
 
@@ -43,7 +47,7 @@ SymbolicTransitionFactor::CodeState& SymbolicTransitionFactor::ensure_state(cons
 void SymbolicTransitionFactor::on_price_event(const std::string& code_raw, int64_t ts, double price) {
     if (!std::isfinite(price)) return;
     ensure_code(code_raw);
-    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(code_raw, _window_sizes, ts, [&](const ScopeKey& scope) {
         auto& s = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 

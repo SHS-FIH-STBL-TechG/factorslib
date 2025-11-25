@@ -11,7 +11,6 @@
 #include "math/linear_algebra.h"
 #include "math/statistics.h"
 #include "utils/config_utils.h"
-#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 namespace factorlib {
@@ -29,8 +28,12 @@ GaussianCopulaFactor::GaussianCopulaFactor(const GaussianCopulaConfig& cfg,
     _cfg.window_size    = RC().geti ("gaussian.window_size",    _cfg.window_size);
     _cfg.regularization = RC().getd ("gaussian.regularization", _cfg.regularization);
     _window_sizes       = factorlib::config::load_window_sizes("gaussian", _cfg.window_size);
+    clamp_window_list(_window_sizes, "[gaussian] window_sizes");
     auto freq_cfg = factorlib::config::load_time_frequencies("gaussian");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[gaussian] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 }
 
 void GaussianCopulaFactor::register_topics(size_t capacity) {
@@ -64,7 +67,7 @@ GaussianCopulaFactor::IncrementalState& GaussianCopulaFactor::ensure_incremental
 void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
     BaseFactor::ensure_code(q.instrument_id);
     // 针对每个频率/窗口组合分别更新 Copula 状态
-    for_each_scope(q.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(q.instrument_id, _window_sizes, q.data_time_ms, [&](const ScopeKey& scope) {
         auto& state = ensure_state(scope);
         auto& inc_state = ensure_incremental(scope);
         const std::string scoped_code = scope.as_bus_code();
@@ -111,7 +114,7 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
         e.order_id      = x.order_id;
 
         BaseFactor::ensure_code(e.instrument_id);
-        for_each_scope(e.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+        for_each_scope(e.instrument_id, _window_sizes, e.data_time_ms, [&](const ScopeKey& scope) {
             auto& state = ensure_state(scope);
             if (e.side == 1) {
                 state.current_ofi += static_cast<double>(e.volume);

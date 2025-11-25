@@ -35,8 +35,12 @@ VolumeMultiscaleAutocorrFactor::VolumeMultiscaleAutocorrFactor(
     }
     _cfg.window_size = ws;
     _window_sizes = factorlib::config::load_window_sizes("vol_ac", _cfg.window_size);
+    clamp_window_list(_window_sizes, "[vol_ac] window_sizes");
     auto freq_cfg = factorlib::config::load_time_frequencies("vol_ac");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[vol_ac] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 
     _cfg.lag1 = RC().geti("vol_ac.lag1", _cfg.lag1);
     _cfg.lag2 = RC().geti("vol_ac.lag2", _cfg.lag2);
@@ -92,7 +96,7 @@ void VolumeMultiscaleAutocorrFactor::on_volume_event(const std::string& code_raw
     }
 
     ensure_code(code_raw);
-    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
         auto& S = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 

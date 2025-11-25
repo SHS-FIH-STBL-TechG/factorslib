@@ -33,8 +33,12 @@ ProbabilityMomentumFactor::ProbabilityMomentumFactor(
     }
     _cfg.window_size = ws;
     _window_sizes = factorlib::config::load_window_sizes("prob_mom", _cfg.window_size);
+    clamp_window_list(_window_sizes, "[prob_mom] window_sizes");
     auto freq_cfg = factorlib::config::load_time_frequencies("prob_mom");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[prob_mom] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 
     double min_w = RC().getd("prob_mom.min_total_weight", _cfg.min_total_weight);
     if (!(min_w > 0.0)) {
@@ -158,7 +162,7 @@ void ProbabilityMomentumFactor::on_price_event(
 
     ensure_code(code_raw);
     // 遍历“相同 code 下所有频率 + 窗口”的组合，每个组合都会独立维护一份统计
-    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
         auto& S = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 

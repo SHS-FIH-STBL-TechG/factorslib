@@ -31,7 +31,6 @@
 #include "utils/log.h"
 #include "../config/runtime_config.h"
 #include "utils/config_utils.h"
-#include "utils/config_utils.h"
 #include "math/memory_kernel.h"
 #include "math/rolling_autocorr.h"
 
@@ -54,8 +53,12 @@ public:
         _cfg.L           = config::RC().geti("mem_kernel.L",           _cfg.L);
         _cfg.alpha       = config::RC().getd("mem_kernel.alpha",       _cfg.alpha);
         _window_sizes    = config::load_window_sizes("mem_kernel", _cfg.window_size);
+        clamp_window_list(_window_sizes, "[mem_kernel] window_sizes");
         auto freq_cfg = config::load_time_frequencies("mem_kernel");
-        if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+        if (!freq_cfg.empty()) {
+            clamp_frequency_list(freq_cfg, "[mem_kernel] time_frequencies");
+            set_time_frequencies_override(freq_cfg);
+        }
     }
 
     static void register_topics(size_t capacity=120) {
@@ -67,7 +70,7 @@ public:
     void on_bar  (const Bar& b) override {
         const std::string& code_raw = b.instrument_id;
         ensure_code(code_raw);
-        for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        for_each_scope(code_raw, _window_sizes, b.data_time_ms, [&](const ScopeKey& scope) {
             auto* st = ensure_state(scope);
             if (!st) return;
             const std::string scoped_code = scope.as_bus_code();

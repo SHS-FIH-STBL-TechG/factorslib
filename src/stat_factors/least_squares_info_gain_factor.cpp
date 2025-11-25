@@ -28,8 +28,12 @@ LeastSquaresInfoGainFactor::LeastSquaresInfoGainFactor(
     }
     _cfg.window_size = ws;
     _window_sizes = factorlib::config::load_window_sizes("lsig", _cfg.window_size);
+    clamp_window_list(_window_sizes, "[lsig] window_sizes");
     auto freq_cfg = factorlib::config::load_time_frequencies("lsig");
-    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
+    if (!freq_cfg.empty()) {
+        clamp_frequency_list(freq_cfg, "[lsig] time_frequencies");
+        set_time_frequencies_override(freq_cfg);
+    }
 }
 
 void LeastSquaresInfoGainFactor::register_topics(size_t capacity) {
@@ -107,7 +111,7 @@ void LeastSquaresInfoGainFactor::on_price_event(
         double px) {
 
     ensure_code(code_raw);
-    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+    for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
         CodeState& S = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 
