@@ -55,7 +55,7 @@ static const char* TOP_PREDICTION = "gaussian_copula/prediction";
 
 GaussianCopulaFactor::GaussianCopulaFactor(const GaussianCopulaConfig& cfg,
                                            std::vector<std::string> codes)
-    // ★ 改造点：把 name/codes 交给 BaseFactor 管理（行为不变）
+    // 把 name/codes 交给 BaseFactor 管理（行为不变）
     : BaseFactor("GaussianCopulaFactor", std::move(codes))
     , _cfg(cfg) {
     _cfg.window_size    = RC().geti ("gaussian.window_size",    _cfg.window_size);
@@ -162,7 +162,7 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
 }
 
 
-// ★ 保持原 force_flush 语义：窗口未满 → 返回 false；已满 → 发布并返回 true
+// 窗口未满 → 返回 false；已满 → 发布并返回 true
 bool GaussianCopulaFactor::force_flush(const std::string& code) {
     auto inc_it = _incremental_states.find(code);
     if (inc_it == _incremental_states.end()) {

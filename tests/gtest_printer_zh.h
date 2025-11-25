@@ -71,6 +71,7 @@ public:
                       << ut.failed_test_count() << " 个测试失败；通过 "
                       << ut.successful_test_count() << "，跳过 "
                       << ut.skipped_test_count() << "。\n";
+            PrintFailedTests(ut);
         }
     }
 
@@ -128,6 +129,44 @@ public:
     }
 
 private:
+    static const ::testing::TestPartResult* FirstFailurePart(const ::testing::TestResult& result) {
+        for (int i = 0; i < result.total_part_count(); ++i) {
+            const auto& part = result.GetTestPartResult(i);
+            if (part.failed()) {
+                return &part;
+            }
+        }
+        return nullptr;
+    }
+
+    void PrintFailedTests(const ::testing::UnitTest& ut) const {
+        int index = 1;
+        for (int i = 0; i < ut.total_test_suite_count(); ++i) {
+            const auto* ts = ut.GetTestSuite(i);
+            if (!ts || !ts->should_run()) continue;
+            for (int j = 0; j < ts->total_test_count(); ++j) {
+                const auto* ti = ts->GetTestInfo(j);
+                if (!ti || !ti->should_run()) continue;
+                if (!ti->result()->Failed()) continue;
+
+                std::cout << "      " << index++ << ". "
+                          << ts->name() << "." << ti->name();
+                if (const auto* failure = FirstFailurePart(*ti->result())) {
+                    if (failure->file_name()) {
+                        std::cout << " (" << failure->file_name()
+                                  << ":" << failure->line_number() << ")";
+                    }
+                    std::cout << "\n";
+                    if (failure->summary() && *failure->summary()) {
+                        std::cout << "         ↳ " << failure->summary() << "\n";
+                    }
+                } else {
+                    std::cout << "\n";
+                }
+            }
+        }
+    }
+
     ::testing::TestEventListener* fallback_; // 不使用默认打印器，仅为占位释放
 };
 
