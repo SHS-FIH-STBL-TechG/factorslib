@@ -9,11 +9,14 @@
 
 #include "utils/databus.h"
 #include "utils/types.h"
-#include "../utils/test_config.h"   // testcfg::read_bars_from_cfg()
 
 using namespace factorlib;
 
 namespace {
+
+inline int64_t ms_of(int h, int m, int s, int ms = 0) {
+    return (((static_cast<int64_t>(h) * 60 + m) * 60) + s) * 1000 + ms;
+}
 
     struct BusGuard {
         BusGuard()  { DataBus::instance().reset(); }
@@ -24,17 +27,33 @@ namespace {
         return DataBus::instance().get_latest<double>(TOP_VOL_MULTI_AC, code, out, ts);
     }
 
+    std::vector<Bar> make_bars(const std::string& code, size_t count) {
+        std::vector<Bar> bars;
+        bars.reserve(count);
+        double px = 80.0;
+        int64_t base_ts = ms_of(9, 45, 0, 0);
+        for (size_t i = 0; i < count; ++i) {
+            double ret = 0.0004 * std::sin(0.3 * static_cast<double>(i));
+            px *= std::exp(ret);
+            Bar b{};
+            b.instrument_id = code;
+            b.data_time_ms  = base_ts + static_cast<int64_t>(i) * 60'000;
+            b.close         = px;
+            b.volume        = 2000 + static_cast<int64_t>(i) * ((i % 5) + 1) * 30;
+            bars.push_back(b);
+        }
+        return bars;
+    }
+
 } // namespace
 
-// 基本用例：从 bars_csv 回放成交量，检查多尺度自相关因子是否产出有限值
-TEST(VolumeMultiscaleAutocorrFactor, BarsCsvFeed_Basic) {
+// 基本用例：从合成的 Bar 序列检查多尺度自相关因子是否产出有限值
+TEST(VolumeMultiscaleAutocorrFactor, SyntheticBarsProduceFiniteAutocorr) {
     BusGuard guard;
     VolumeMultiscaleAutocorrFactor::register_topics(2048);
 
-    auto bars = testcfg::read_bars_from_cfg();
-    ASSERT_FALSE(bars.empty()) << "bars_csv 未配置或无有效数据";
-
-    const std::string code = bars[0].instrument_id;
+    const std::string code = "VOL_MULTI_SYN";
+    auto bars = make_bars(code, 160);
 
     // 这里直接用默认配置，不再显式写 VolMultiACConfig 那种不存在的类型
     VolumeMultiscaleAutocorrFactor factor({code});

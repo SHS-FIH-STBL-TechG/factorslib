@@ -6,11 +6,14 @@
 
 #include "utils/databus.h"
 #include "utils/types.h"
-#include "../utils/test_config.h"   // 使用 testcfg::read_*_from_cfg
 
 using namespace factorlib;
 
 namespace {
+
+inline int64_t ms_of(int h, int m, int s, int ms = 0) {
+    return (((static_cast<int64_t>(h) * 60 + m) * 60) + s) * 1000 + ms;
+}
 
 // 每个用例前后清理 DataBus，避免状态串扰
 struct BusGuard {
@@ -23,19 +26,79 @@ bool last_ig(const std::string& code, double& out, int64_t* ts = nullptr) {
     return DataBus::instance().get_latest<double>(TOP_LSIG_IG, code, out, ts);
 }
 
+std::vector<double> generate_price_series(size_t count, double start_price = 100.0) {
+    std::vector<double> prices;
+    prices.reserve(count);
+    double px = start_price;
+    for (size_t i = 0; i < count; ++i) {
+        double ret = 0.0006 + 0.0004 * std::sin(0.15 * static_cast<double>(i));
+        px *= std::exp(ret);
+        prices.push_back(px);
+    }
+    return prices;
+}
+
+std::vector<Bar> make_bars(const std::string& code, size_t count) {
+    auto prices = generate_price_series(count);
+    std::vector<Bar> bars;
+    bars.reserve(count);
+    int64_t base_ts = ms_of(9, 30, 0, 0);
+    for (size_t i = 0; i < count; ++i) {
+        Bar b{};
+        b.instrument_id = code;
+        b.data_time_ms  = base_ts + static_cast<int64_t>(i) * 60'000;
+        b.close         = prices[i];
+        b.volume        = 1000 + static_cast<int64_t>(i) * 20;
+        bars.push_back(b);
+    }
+    return bars;
+}
+
+std::vector<Transaction> make_transactions(const std::string& code, size_t count) {
+    auto prices = generate_price_series(count);
+    std::vector<Transaction> trans;
+    trans.reserve(count);
+    int64_t base_ts = ms_of(9, 30, 0, 500);
+    for (size_t i = 0; i < count; ++i) {
+        Transaction t{};
+        t.instrument_id = code;
+        t.data_time_ms  = base_ts + static_cast<int64_t>(i) * 5'000;
+        t.main_seq      = static_cast<uint64_t>(i + 1);
+        double jitter   = 1.0 + 0.0002 * ((i % 3) - 1);
+        t.price         = prices[i] * jitter;
+        t.side          = (i % 2 == 0) ? 1 : -1;
+        t.volume        = 50 + static_cast<uint64_t>(i % 7) * 10;
+        trans.push_back(t);
+    }
+    return trans;
+}
+
+std::vector<QuoteDepth> make_quotes(const std::string& code, size_t count) {
+    auto prices = generate_price_series(count);
+    std::vector<QuoteDepth> quotes;
+    quotes.reserve(count);
+    int64_t base_ts = ms_of(9, 30, 0, 250);
+    for (size_t i = 0; i < count; ++i) {
+        QuoteDepth q{};
+        q.instrument_id = code;
+        q.data_time_ms  = base_ts + static_cast<int64_t>(i) * 3'000;
+        q.bid_price     = prices[i] - 0.01;
+        q.ask_price     = prices[i] + 0.01;
+        quotes.push_back(q);
+    }
+    return quotes;
+}
+
 } // namespace
 
-// ============== 用例 1：Bar CSV 驱动 ==============
-TEST(LeastSquaresInfoGain, BarsCsvFeed_EmitsFactor) {
+// ============== 用例 1：Bar 驱动（合成数据） ==============
+TEST(LeastSquaresInfoGain, BarsSyntheticFeedProducesFactor) {
     BusGuard _guard;
     LeastSquaresInfoGainFactor::register_topics(2048);
 
-    // 从 test_config.ini 的 [global].bars_csv 读取 Bar 序列
-    auto bars = testcfg::read_bars_from_cfg();
-    ASSERT_FALSE(bars.empty()) << "bars_csv 未配置或无有效数据";
-    ASSERT_GE(bars.size(), 40u) << "Bar CSV 行数太少（请至少保证 >= 40 行）";
+    auto bars = make_bars("LSIG_BAR", 120);
 
-    const std::string code = bars[0].instrument_id;
+    const std::string code = "LSIG_BAR";
 
     LsInfoGainConfig cfg;
     LeastSquaresInfoGainFactor factor({ code }, cfg);
@@ -51,17 +114,14 @@ TEST(LeastSquaresInfoGain, BarsCsvFeed_EmitsFactor) {
     EXPECT_TRUE(std::isfinite(ig));
 }
 
-// ============== 用例 2：Transaction CSV 驱动 ==============
-TEST(LeastSquaresInfoGain, TransactionsCsvFeed_EmitsFactor) {
+// ============== 用例 2：Transaction 驱动（合成数据） ==============
+TEST(LeastSquaresInfoGain, TransactionsSyntheticFeedProducesFactor) {
     BusGuard _guard;
     LeastSquaresInfoGainFactor::register_topics(4096);
 
-    // 从 [global].transactions_csv 读取逐笔成交
-    auto trans = testcfg::read_transactions_from_cfg();
-    ASSERT_FALSE(trans.empty()) << "transactions_csv 未配置或无有效数据";
-    ASSERT_GE(trans.size(), 40u) << "Transaction CSV 行数太少（请至少保证 >= 40 行）";
+    auto trans = make_transactions("LSIG_TRX", 150);
 
-    const std::string code = trans[0].instrument_id;
+    const std::string code = "LSIG_TRX";
 
     LsInfoGainConfig cfg;
     LeastSquaresInfoGainFactor factor({ code }, cfg);
@@ -78,17 +138,14 @@ TEST(LeastSquaresInfoGain, TransactionsCsvFeed_EmitsFactor) {
     EXPECT_TRUE(std::isfinite(ig));
 }
 
-// ============== 用例 3：Quote CSV 驱动（中间价）===============
-TEST(LeastSquaresInfoGain, SnapshotCsvFeed_EmitsFactor) {
+// ============== 用例 3：Quote 驱动（中间价）===============
+TEST(LeastSquaresInfoGain, QuotesSyntheticFeedProducesFactor) {
     BusGuard _guard;
     LeastSquaresInfoGainFactor::register_topics(4096);
 
-    // 从 [global].quotes_csv 读取快照
-    auto quotes = testcfg::read_quotes_from_cfg();
-    ASSERT_FALSE(quotes.empty()) << "quotes_csv 未配置或无有效数据";
-    ASSERT_GE(quotes.size(), 40u) << "Quote CSV 行数太少（请至少保证 >= 40 行）";
+    auto quotes = make_quotes("LSIG_Q", 140);
 
-    const std::string code = quotes[0].instrument_id;
+    const std::string code = "LSIG_Q";
 
     LsInfoGainConfig cfg;
     LeastSquaresInfoGainFactor factor({ code }, cfg);
@@ -104,20 +161,15 @@ TEST(LeastSquaresInfoGain, SnapshotCsvFeed_EmitsFactor) {
     EXPECT_TRUE(std::isfinite(ig));
 }
 
-// ============== 用例 4：三种 CSV 混合驱动 ==============
-TEST(LeastSquaresInfoGain, MixedCsvFeed_MultiSources) {
+// ============== 用例 4：三种数据混合驱动 ==============
+TEST(LeastSquaresInfoGain, MixedSyntheticFeedMultiSources) {
     BusGuard _guard;
     LeastSquaresInfoGainFactor::register_topics(8192);
 
-    auto bars   = testcfg::read_bars_from_cfg();
-    auto trans  = testcfg::read_transactions_from_cfg();
-    auto quotes = testcfg::read_quotes_from_cfg();
-
-    ASSERT_FALSE(bars.empty())   << "bars_csv 未配置或无有效数据";
-    ASSERT_FALSE(trans.empty())  << "transactions_csv 未配置或无有效数据";
-    ASSERT_FALSE(quotes.empty()) << "quotes_csv 未配置或无有效数据";
-
-    const std::string code = bars[0].instrument_id;
+    const std::string code = "LSIG_MIX";
+    auto bars   = make_bars(code, 80);
+    auto trans  = make_transactions(code, 90);
+    auto quotes = make_quotes(code, 85);
 
     LsInfoGainConfig cfg;
     LeastSquaresInfoGainFactor factor({ code }, cfg);

@@ -10,11 +10,14 @@
 
 #include "utils/databus.h"
 #include "utils/types.h"
-#include "../utils/test_config.h"   // testcfg::read_bars_from_cfg()
 
 using namespace factorlib;
 
 namespace {
+
+inline int64_t ms_of(int h, int m, int s, int ms = 0) {
+    return (((static_cast<int64_t>(h) * 60 + m) * 60) + s) * 1000 + ms;
+}
 
 struct BusGuard {
     BusGuard()  { DataBus::instance().reset(); }
@@ -25,17 +28,33 @@ bool last_mgf(const std::string& code, double& out, int64_t* ts = nullptr) {
     return DataBus::instance().get_latest<double>(TOP_VOL_MGF, code, out, ts);
 }
 
+std::vector<Bar> make_bars(const std::string& code, size_t count) {
+    std::vector<Bar> bars;
+    bars.reserve(count);
+    double px = 60.0;
+    int64_t base_ts = ms_of(9, 50, 0, 0);
+    for (size_t i = 0; i < count; ++i) {
+        double ret = 0.0005 * std::cos(0.12 * static_cast<double>(i));
+        px *= std::exp(ret);
+        Bar b{};
+        b.instrument_id = code;
+        b.data_time_ms  = base_ts + static_cast<int64_t>(i) * 30'000;
+        b.close         = px;
+        b.volume        = 500 + static_cast<int64_t>((i % 10) + 1) * 25;
+        bars.push_back(b);
+    }
+    return bars;
+}
+
 } // namespace
 
-// 数学验证用例：对同一批成交量，测试端按定义重算 MGF 并与因子输出对比
-TEST(VolumeMGFFactor, BarsCsvFeed_MatchMathematicalDefinition) {
+// 数学验证用例：对合成成交量按定义重算 MGF 并与因子输出对比
+TEST(VolumeMGFFactor, SyntheticBarsMatchMathematicalDefinition) {
     BusGuard guard;
     VolumeMGFFactor::register_topics(2048);
 
-    auto bars = testcfg::read_bars_from_cfg();
-    ASSERT_FALSE(bars.empty()) << "bars_csv 未配置或无有效数据";
-
-    const std::string code = bars[0].instrument_id;
+    const std::string code = "VOL_MGF_SYN";
+    auto bars = make_bars(code, 120);
 
     VolumeMGFConfig cfg;
     cfg.window_size = 64;    // 用一个相对小的窗口，便于滑窗滚动
