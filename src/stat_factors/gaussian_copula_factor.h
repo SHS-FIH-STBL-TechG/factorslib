@@ -13,6 +13,7 @@
 #include "utils/databus.h"
 #include "utils/log.h"
 #include "math/incremental_rank.h"
+#include "math/incremental_covariance.h"
 
 /**
  * @file gaussian_copula_factor.h

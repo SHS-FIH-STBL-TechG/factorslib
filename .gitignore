@@ -43,3 +43,6 @@
 # clion files
 cmake-build-*/
 .idea/
+
+# vscode files
+.vscode/

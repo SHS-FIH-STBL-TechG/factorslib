@@ -221,7 +221,7 @@ void LeastSquaresInfoGainFactor::push_sample_and_update(
     if (var_logR < 0.0) var_logR = 0.0;
     const double se = std::sqrt(var_logR);
 
-    const double z975 = math::Distributions::normal_quantile(0.975);
+    const double z975 = math::Distributions<double>::normal_quantile(0.975);
     const double ig_lo = ig - z975 * se;
     const double ig_hi = ig + z975 * se;
 

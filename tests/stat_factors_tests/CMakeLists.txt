@@ -3,6 +3,7 @@
 
 # stat_factors 专用测试目标
 add_executable(stat_factors_tests
+        stat_factors_tests_main.cpp
         gaussian_copula_factor_test.cpp
         granger_causality_factor_test.cpp
         least_squares_info_gain_factor_test.cpp
@@ -23,7 +24,10 @@ target_link_libraries(stat_factors_tests PRIVATE
         factor_basic        # stat_factors 依赖 factor_basic
         factorlib_utils
         gtest
-        gtest_main
+)
+
+target_include_directories(stat_factors_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
 # 非 MSVC 平台链接线程库（pthread 等）

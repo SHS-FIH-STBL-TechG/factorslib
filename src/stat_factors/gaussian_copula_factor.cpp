@@ -175,9 +175,9 @@ void GaussianCopulaFactor::IncrementalState::update_data(double ofi, double volu
         double volume_rank = volume_rank_calc.median_rank(volume);
         double return_rank = return_rank_calc.median_rank(ret);
 
-        double z_ofi = math::Distributions::normal_quantile(ofi_rank);
-        double z_volume = math::Distributions::normal_quantile(volume_rank);
-        double z_return = math::Distributions::normal_quantile(return_rank);
+        double z_ofi = math::Distributions<double>::normal_quantile(ofi_rank);
+        double z_volume = math::Distributions<double>::normal_quantile(volume_rank);
+        double z_return = math::Distributions<double>::normal_quantile(return_rank);
 
         // 更新协方差
         Eigen::Vector3d normal_score;
@@ -220,8 +220,8 @@ double GaussianCopulaFactor::compute_conditional_expectation_incremental(const s
     double current_ofi_rank = inc_state.ofi_rank_calc.median_rank(state.current_ofi);
     double current_volume_rank = inc_state.volume_rank_calc.median_rank(state.current_volume);
 
-    double z_ofi_current = math::Distributions::normal_quantile(current_ofi_rank);
-    double z_volume_current = math::Distributions::normal_quantile(current_volume_rank);
+    double z_ofi_current = math::Distributions<double>::normal_quantile(current_ofi_rank);
+    double z_volume_current = math::Distributions<double>::normal_quantile(current_volume_rank);
 
     // 条件期望（对 Z_return | Z_ofi, Z_volume）
     Eigen::Vector2d condition_values;
@@ -235,7 +235,7 @@ double GaussianCopulaFactor::compute_conditional_expectation_incremental(const s
 
     // 经验逆 CDF（ret 的秩样本）
     auto sorted_returns = inc_state.return_rank_calc.get_sorted_data();
-    double predicted_return = math::Distributions::empirical_inverse_cdf(sorted_returns, conditional_probability);
+    double predicted_return = math::Distributions<double>::empirical_inverse_cdf(sorted_returns, conditional_probability);
 
     return predicted_return;
 }
