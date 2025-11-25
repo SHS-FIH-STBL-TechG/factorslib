@@ -66,22 +66,24 @@ private:
     struct CodeState {
         math::RollingMODWT<double> modwt;
         bool ready = false;
+        int window_size = 0;
 
         explicit CodeState(const WaveTrendConfig& cfg);
     };
 
     WaveTrendConfig _cfg;
+    std::vector<int> _window_sizes; ///< 多窗口 MODWT 配置
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
 
     /// 统一价格事件入口（支持 Quote / Tick / Bar）
-    void on_price_event(const std::string& code,
+    void on_price_event(const std::string& code_raw,
                         int64_t ts_ms,
                         double price);
 
     /// 在窗口 ready() 时计算能量比并发布
-    void compute_and_publish(const std::string& code,
+    void compute_and_publish(const std::string& scoped_code,
                              CodeState& st,
                              int64_t ts_ms);
 };

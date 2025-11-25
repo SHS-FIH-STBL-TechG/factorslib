@@ -1,6 +1,7 @@
 #include "volume_multiscale_autocorr_factor.h"
 
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 
@@ -14,7 +15,9 @@ VolumeMultiscaleAutocorrFactor::CodeState::CodeState(const VolumeMultiscaleAutoc
     , ac2(static_cast<std::size_t>(cfg.window_size), static_cast<std::size_t>(cfg.lag2))
     , ac3(static_cast<std::size_t>(cfg.window_size), static_cast<std::size_t>(cfg.lag3))
     , ac4(static_cast<std::size_t>(cfg.window_size), static_cast<std::size_t>(cfg.lag4))
-{}
+{
+    window_size = cfg.window_size;
+}
 
 // =====================[ 构造 & 配置 ]=====================
 
@@ -31,6 +34,9 @@ VolumeMultiscaleAutocorrFactor::VolumeMultiscaleAutocorrFactor(
         ws = 128;
     }
     _cfg.window_size = ws;
+    _window_sizes = factorlib::config::load_window_sizes("vol_ac", _cfg.window_size);
+    auto freq_cfg = factorlib::config::load_time_frequencies("vol_ac");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 
     _cfg.lag1 = RC().geti("vol_ac.lag1", _cfg.lag1);
     _cfg.lag2 = RC().geti("vol_ac.lag2", _cfg.lag2);
@@ -55,18 +61,29 @@ void VolumeMultiscaleAutocorrFactor::register_topics(size_t capacity) {
 
 // =====================[ code 初始化 ]=====================
 
-void VolumeMultiscaleAutocorrFactor::ensure_state(const std::string& code) {
-    if (_states.find(code) != _states.end()) return;
-    _states.emplace(code, CodeState(_cfg));
+VolumeMultiscaleAutocorrFactor::CodeState& VolumeMultiscaleAutocorrFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
+    if (it == _states.end()) {
+        auto cfg = _cfg;
+        cfg.window_size = scope.window > 0 ? scope.window : _cfg.window_size;
+        it = _states.emplace(std::move(key), CodeState(cfg)).first;
+    }
+    return it->second;
 }
 
 void VolumeMultiscaleAutocorrFactor::on_code_added(const std::string& code) {
-    ensure_state(code);
+    const auto& freqs = get_time_frequencies();
+    for (int freq : freqs) {
+        for (int window : _window_sizes) {
+            (void)ensure_state(ScopeKey{code, freq, window});
+        }
+    }
 }
 
 // =====================[ 统一事件入口 ]=====================
 
-void VolumeMultiscaleAutocorrFactor::on_volume_event(const std::string& code,
+void VolumeMultiscaleAutocorrFactor::on_volume_event(const std::string& code_raw,
                                                      int64_t ts_ms,
                                                      double volume) {
     if (!(volume > 0.0)) {
@@ -74,8 +91,10 @@ void VolumeMultiscaleAutocorrFactor::on_volume_event(const std::string& code,
         return;
     }
 
-    ensure_state(code);
-    auto& S = _states.at(code);
+    ensure_code(code_raw);
+    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        auto& S = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
     S.ready = true;
     (void)S.ac1.push(volume);
@@ -84,8 +103,9 @@ void VolumeMultiscaleAutocorrFactor::on_volume_event(const std::string& code,
     (void)S.ac4.push(volume);
 
     if (S.ac1.ready() && S.ac2.ready() && S.ac3.ready() && S.ac4.ready()) {
-        compute_and_publish(code, S, ts_ms);
-    }
+            compute_and_publish(scoped_code, S, ts_ms);
+        }
+    });
 }
 
 void VolumeMultiscaleAutocorrFactor::compute_and_publish(const std::string& code,

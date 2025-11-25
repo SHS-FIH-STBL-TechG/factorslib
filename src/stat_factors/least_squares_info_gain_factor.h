@@ -62,25 +62,27 @@ inline constexpr const char* TOP_LSIG_IG_HI = "lsig/ig_hi";  // 95% CI 上界
             bool   has_prev_ret{false};
             double prev_ret{0.0};
 
+            int    window_size{0};
             std::unique_ptr<SlidingOLS>   ols;
             std::unique_ptr<SlidingStats> y_stats;
         };
 
         LsInfoGainConfig _cfg;
+        std::vector<int> _window_sizes; ///< 支持一次性运行多个窗口长度
         std::unordered_map<std::string, CodeState> _states;
 
-        void ensure_state(const std::string& code);
+        CodeState& ensure_state(const ScopeKey& scope);
 
         /// 统一价格事件入口：任何来源（快照/逐笔/K 线）的价格都走这里
-        void on_price_event(const std::string& code, int64_t ts_ms, double px);
+        void on_price_event(const std::string& code_raw, int64_t ts_ms, double px);
 
         void push_sample_and_update(CodeState& S,
-                                    const std::string& code,
+                                    const ScopeKey& scope,
                                     int64_t ts_ms,
                                     double x_prev_ret,
                                     double y_curr_ret);
 
-        void publish_all(const std::string& code,
+        void publish_all(const std::string& scoped_code,
                          int64_t ts_ms,
                          double ig,
                          double ig_lo,

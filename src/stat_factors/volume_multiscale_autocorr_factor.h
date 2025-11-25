@@ -69,22 +69,24 @@ private:
         math::RollingAutoCorr<double> ac2;
         math::RollingAutoCorr<double> ac3;
         math::RollingAutoCorr<double> ac4;
+        int window_size = 0;
 
         explicit CodeState(const VolumeMultiscaleAutocorrConfig& cfg);
     };
 
     VolumeMultiscaleAutocorrConfig _cfg;
+    std::vector<int> _window_sizes; ///< 允许一次注册多组滑窗
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
 
     /// 统一成交量事件入口
-    void on_volume_event(const std::string& code,
+    void on_volume_event(const std::string& code_raw,
                          int64_t ts_ms,
                          double volume);
 
     /// 计算多尺度相关性并发布
-    void compute_and_publish(const std::string& code,
+    void compute_and_publish(const std::string& scoped_code,
                              CodeState& S,
                              int64_t ts_ms);
 };

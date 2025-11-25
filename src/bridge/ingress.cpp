@@ -3,6 +3,7 @@
 #include "utils/data_adapter.h"
 #include "ifactor.h"
 #include "utils/types.h"
+#include "utils/processing_axes.h"
 
 #include "../../StrategyPlatform_release/actionType/DataType.h"
 
@@ -14,6 +15,11 @@ namespace factorlib::bridge {
 
     void set_factors(const std::vector<std::shared_ptr<factorlib::IFactor>>& factors) {
         g_factors = factors;
+    }
+
+    void set_time_frequencies(const std::vector<int>& freqs) {
+        // demo 层可以在初始化时调用此函数，把“计算频率轴”注入给所有因子
+        factorlib::set_time_frequencies(freqs);
     }
 
     void ingest_snapshot_sh(const std::vector<std_SnapshotStockSH>& v) {

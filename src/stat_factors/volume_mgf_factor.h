@@ -21,6 +21,7 @@
 #include <string>
 #include <unordered_map>
 #include <deque>
+#include <vector>
 
 #include "ifactor.h"
 #include "utils/types.h"
@@ -74,17 +75,18 @@ private:
     };
 
     VolumeMGFConfig _cfg;
+    std::vector<int> _window_sizes; ///< 来自 INI 的多窗口列表
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
 
     /// 统一成交量事件入口
-    void on_volume_event(const std::string& code,
+    void on_volume_event(const std::string& code_raw,
                          int64_t ts_ms,
                          double volume);
 
     /// 计算 MGF 并发布
-    void compute_and_publish(const std::string& code,
+    void compute_and_publish(const std::string& scoped_code,
                              CodeState& S,
                              int64_t ts_ms);
 };

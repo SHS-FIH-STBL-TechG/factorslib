@@ -64,18 +64,19 @@ private:
     };
 
     PcaAngularMomentumConfig _cfg;
+    std::vector<int> _window_sizes; ///< 桥接 ProcessingAxes + 多窗口配置
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
 
     std::vector<double> make_features(const Bar& b,
                                       double ret) const;
 
-    void on_price_event(const std::string& code,
+    void on_price_event(const std::string& code_raw,
                         int64_t ts_ms,
                         const Bar& b);
 
-    void maybe_publish(const std::string& code,
+    void maybe_publish(const std::string& scoped_code,
                        CodeState& st,
                        int64_t ts_ms,
                        const std::vector<double>& x);

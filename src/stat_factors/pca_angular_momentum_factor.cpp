@@ -4,6 +4,7 @@
 #include <limits>
 
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 
@@ -38,6 +39,9 @@ PcaAngularMomentumFactor::PcaAngularMomentumFactor(
     if (_cfg.k > _cfg.dims) _cfg.k = std::min(2, _cfg.dims);
     if (_cfg.lr <= 0.0) _cfg.lr = 0.05;
     if (_cfg.warmup < 8) _cfg.warmup = 8;
+    _window_sizes = {0};
+    auto freq_cfg = factorlib::config::load_time_frequencies("pca_ang");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 }
 
 // =====================[ topic 注册 ]=====================
@@ -49,13 +53,22 @@ void PcaAngularMomentumFactor::register_topics(std::size_t capacity) {
 
 // =====================[ state 管理 ]=====================
 
-void PcaAngularMomentumFactor::ensure_state(const std::string& code) {
-    if (_states.find(code) != _states.end()) return;
-    _states.emplace(code, CodeState(_cfg));
+PcaAngularMomentumFactor::CodeState& PcaAngularMomentumFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
+    if (it == _states.end()) {
+        it = _states.emplace(key, CodeState(_cfg)).first;
+    }
+    return it->second;
 }
 
 void PcaAngularMomentumFactor::on_code_added(const std::string& code) {
-    ensure_state(code);
+    const auto& freqs = get_time_frequencies();
+    for (int freq : freqs) {
+        for (int window : _window_sizes) {
+            (void)ensure_state(ScopeKey{code, freq, window});
+        }
+    }
 }
 
 // =====================[ 特征构造 ]=====================
@@ -78,41 +91,44 @@ std::vector<double> PcaAngularMomentumFactor::make_features(const Bar& b,
 
 // =====================[ 核心逻辑 ]=====================
 
-void PcaAngularMomentumFactor::on_price_event(const std::string& code,
+void PcaAngularMomentumFactor::on_price_event(const std::string& code_raw,
                                               int64_t ts_ms,
                                               const Bar& b) {
     if (!(b.close > 0.0)) return;
 
-    ensure_state(code);
-    auto& st = _states.at(code);
+    ensure_code(code_raw);
+    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        auto& st = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
-    double close = b.close;
-    if (!st.has_last_close) {
+        double close = b.close;
+        if (!st.has_last_close) {
+            st.last_close = close;
+            st.has_last_close = true;
+            return;
+        }
+
+        double ret = 0.0;
+        double ratio = close / st.last_close;
+        if (ratio > 0.0) {
+            ret = std::log(ratio);
+        }
         st.last_close = close;
-        st.has_last_close = true;
-        return;
-    }
 
-    double ret = 0.0;
-    double ratio = close / st.last_close;
-    if (ratio > 0.0) {
-        ret = std::log(ratio);
-    }
-    st.last_close = close;
+        if (!std::isfinite(ret)) return;
 
-    if (!std::isfinite(ret)) return;
+        auto x = make_features(b, ret);
 
-    auto x = make_features(b, ret);
+        if (!st.pca.push(x)) {
+            LOG_DEBUG("PcaAngularMomentumFactor: push failed, code={}", scoped_code);
+            return;
+        }
 
-    if (!st.pca.push(x)) {
-        LOG_DEBUG("PcaAngularMomentumFactor: push failed, code={}", code);
-        return;
-    }
+        ++st.n_samples;
+        if (st.n_samples < _cfg.warmup) return;
 
-    ++st.n_samples;
-    if (st.n_samples < _cfg.warmup) return;
-
-    maybe_publish(code, st, ts_ms, x);
+        maybe_publish(scoped_code, st, ts_ms, x);
+    });
 }
 
 void PcaAngularMomentumFactor::maybe_publish(const std::string& code,

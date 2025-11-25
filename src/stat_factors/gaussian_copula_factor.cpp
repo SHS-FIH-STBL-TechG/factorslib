@@ -10,6 +10,8 @@
 #include "math/incremental_rank.h"
 #include "math/linear_algebra.h"
 #include "math/statistics.h"
+#include "utils/config_utils.h"
+#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 namespace factorlib {
@@ -26,6 +28,9 @@ GaussianCopulaFactor::GaussianCopulaFactor(const GaussianCopulaConfig& cfg,
     , _cfg(cfg) {
     _cfg.window_size    = RC().geti ("gaussian.window_size",    _cfg.window_size);
     _cfg.regularization = RC().getd ("gaussian.regularization", _cfg.regularization);
+    _window_sizes       = factorlib::config::load_window_sizes("gaussian", _cfg.window_size);
+    auto freq_cfg = factorlib::config::load_time_frequencies("gaussian");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 }
 
 void GaussianCopulaFactor::register_topics(size_t capacity) {
@@ -35,55 +40,63 @@ void GaussianCopulaFactor::register_topics(size_t capacity) {
 
 // ---- 初始化保障 ----
 
-void GaussianCopulaFactor::ensure_code(const std::string& code) {
-    // ★ 保持原初始化语义；不在 on_code_added 重复初始化，避免二次创建
-    if (_states.find(code) == _states.end()) {
-        _states[code] = CodeState{};
+GaussianCopulaFactor::CodeState& GaussianCopulaFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
+    if (it == _states.end()) {
+        it = _states.emplace(key, CodeState{}).first;
     }
-    if (_incremental_states.find(code) == _incremental_states.end()) {
-        _incremental_states[code] = std::make_unique<IncrementalState>(_cfg.window_size);
+    return it->second;
+}
+
+GaussianCopulaFactor::IncrementalState& GaussianCopulaFactor::ensure_incremental(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _incremental_states.find(key);
+    if (it == _incremental_states.end()) {
+        std::size_t win = static_cast<std::size_t>(scope.window > 0 ? scope.window : _cfg.window_size);
+        it = _incremental_states.emplace(key, std::make_unique<IncrementalState>(win)).first;
     }
+    return *it->second;
 }
 
 // ---- 回调实现（保持你的原逻辑）----
 
 void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
-    ensure_code(q.instrument_id);
-    auto& state = _states[q.instrument_id];
-    auto& inc_state = _incremental_states[q.instrument_id];
+    BaseFactor::ensure_code(q.instrument_id);
+    // 针对每个频率/窗口组合分别更新 Copula 状态
+    for_each_scope(q.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+        auto& state = ensure_state(scope);
+        auto& inc_state = ensure_incremental(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
-    // 计算当前中间价（与原一致；双方缺失处理留给上游）
-    double mid_price = (q.bid_price + q.ask_price) / 2.0;
+        // 计算当前中间价
+        double mid_price = (q.bid_price + q.ask_price) / 2.0;
 
-    if (state.has_initial_price) {
-        // ★ 保持你的“对数收益率”定义（之前误改为绝对差，这里已恢复）
-        double log_return = std::log(mid_price / state.last_mid_price);
+        if (state.has_initial_price) {
+            double log_return = std::log(mid_price / state.last_mid_price);
 
-        // 增量更新（秩 + 协方差）
-        inc_state->update_data(state.current_ofi, state.current_volume, log_return);
+            inc_state.update_data(state.current_ofi, state.current_volume, log_return);
 
-        // 窗口已满 → 计算/发布
-        if (inc_state->is_window_full()) {
-            double prediction = compute_conditional_expectation_incremental(q.instrument_id);
-            publish_prediction(q.instrument_id, prediction, q.data_time_ms);
-        } else{
-            LOG_DEBUG("GaussianCopulaFactor[{}]: 窗口未满：ofi={}, volume={}, ret={}",
-                      q.instrument_id,
-                      inc_state->ofi_rank_calc.size(),
-                      inc_state->volume_rank_calc.size(),
-                      inc_state->return_rank_calc.size());
+            if (inc_state.is_window_full()) {
+                double prediction = compute_conditional_expectation_incremental(scoped_code);
+                publish_prediction(scoped_code, prediction, q.data_time_ms);
+            } else{
+                LOG_DEBUG("GaussianCopulaFactor[{}]: 窗口未满：ofi={}, volume={}, ret={}",
+                          scoped_code,
+                          inc_state.ofi_rank_calc.size(),
+                          inc_state.volume_rank_calc.size(),
+                          inc_state.return_rank_calc.size());
+            }
+
+            state.current_ofi = 0.0;
+            state.current_volume = 0.0;
+        } else {
+            LOG_DEBUG("GaussianCopulaFactor[{}]: 初始化价格: {}", scoped_code, mid_price);
         }
 
-        // 重置当前 tick 累计
-        state.current_ofi = 0.0;
-        state.current_volume = 0.0;
-    } else {
-        LOG_DEBUG("GaussianCopulaFactor[{}]: 初始化价格: {}", q.instrument_id, mid_price);
-    }
-
-    // 更新状态
-    state.last_mid_price = mid_price;
-    state.has_initial_price = true;
+        state.last_mid_price = mid_price;
+        state.has_initial_price = true;
+    });
 }
 
     void GaussianCopulaFactor::on_tick(const CombinedTick& x) {
@@ -97,16 +110,17 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
         e.volume        = x.volume;
         e.order_id      = x.order_id;
 
-        ensure_code(e.instrument_id);
-        auto& state = _states[e.instrument_id];
-        if (e.side == 1) {
-            state.current_ofi += static_cast<double>(e.volume);
-        } else if (e.side == -1) {
-            state.current_ofi -= static_cast<double>(e.volume);
-        }
-        state.current_volume += static_cast<double>(e.volume);
+        BaseFactor::ensure_code(e.instrument_id);
+        for_each_scope(e.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+            auto& state = ensure_state(scope);
+            if (e.side == 1) {
+                state.current_ofi += static_cast<double>(e.volume);
+            } else if (e.side == -1) {
+                state.current_ofi -= static_cast<double>(e.volume);
+            }
+            state.current_volume += static_cast<double>(e.volume);
+        });
     } else {
-        // 原 on_transaction 为注释性空操作，按原语义保持为空
         (void)x;
     }
 }
@@ -180,24 +194,28 @@ bool GaussianCopulaFactor::IncrementalState::is_window_full() const {
 // ---- 增量条件期望计算（保持原算法）----
 
 double GaussianCopulaFactor::compute_conditional_expectation_incremental(const std::string& code) {
-    auto& inc_state = _incremental_states[code];
+    auto it = _incremental_states.find(code);
+    if (it == _incremental_states.end()) {
+        return 0.0;
+    }
+    auto& inc_state = *it->second;
 
-    if (!inc_state->is_window_full()) {
+    if (!inc_state.is_window_full()) {
         LOG_WARN("GaussianCopulaFactor[{}]: 计算条件期望失败，窗口未满", code);
         return 0.0;
     }
 
     // 使用增量统计量
-    auto mean = inc_state->cov_calc.mean();
-    auto covariance = inc_state->cov_calc.covariance();
+    auto mean = inc_state.cov_calc.mean();
+    auto covariance = inc_state.cov_calc.covariance();
 
     // 正则化协方差矩阵
     covariance += Eigen::Matrix3d::Identity() * _cfg.regularization;
 
     // 当前 OFI / Volume 的秩 → 正态分数
     auto& state = _states[code];
-    double current_ofi_rank = inc_state->ofi_rank_calc.median_rank(state.current_ofi);
-    double current_volume_rank = inc_state->volume_rank_calc.median_rank(state.current_volume);
+    double current_ofi_rank = inc_state.ofi_rank_calc.median_rank(state.current_ofi);
+    double current_volume_rank = inc_state.volume_rank_calc.median_rank(state.current_volume);
 
     double z_ofi_current = math::Distributions::normal_quantile(current_ofi_rank);
     double z_volume_current = math::Distributions::normal_quantile(current_volume_rank);
@@ -213,7 +231,7 @@ double GaussianCopulaFactor::compute_conditional_expectation_incremental(const s
     double conditional_probability = 0.5 * (1.0 + std::erf(conditional_mean / std::sqrt(2.0)));
 
     // 经验逆 CDF（ret 的秩样本）
-    auto sorted_returns = inc_state->return_rank_calc.get_sorted_data();
+    auto sorted_returns = inc_state.return_rank_calc.get_sorted_data();
     double predicted_return = math::Distributions::empirical_inverse_cdf(sorted_returns, conditional_probability);
 
     return predicted_return;

@@ -13,6 +13,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include "ifactor.h"
 #include "utils/types.h"
 #include "utils/databus.h"
@@ -47,13 +48,15 @@ private:
         bool has_last=false;
         double last_p=0.0;
         std::unique_ptr<math::RollingSymbolicDynamics<double>> sym;
+        int window_size = 0;
     };
     SymbolicCfg _cfg;
+    std::vector<int> _window_sizes; ///< 配置指定的全部窗口长度
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
-    void on_price_event(const std::string& code, int64_t ts, double price);
-    void maybe_publish(const std::string& code, int64_t ts);
+    CodeState& ensure_state(const ScopeKey& scope);
+    void on_price_event(const std::string& code_raw, int64_t ts, double price);
+    void maybe_publish(const std::string& scoped_code, CodeState& st, int64_t ts);
 };
 
 } // namespace factorlib

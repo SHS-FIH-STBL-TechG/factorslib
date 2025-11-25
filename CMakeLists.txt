@@ -127,6 +127,7 @@ add_library(factorlib_utils
         src/utils/data_adapter.cpp
         src/utils/trading_time.cpp
         src/utils/nms_bucket_aggregator.cpp
+        src/utils/processing_axes.cpp
         include/math/incremental_rank.h
         include/utils/config/feed_mode.h
         include/math/sliding_normal_eq.h

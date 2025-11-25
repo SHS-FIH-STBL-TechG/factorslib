@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
 #include "utils/databus.h"
 #include "utils/log.h"
 
@@ -18,7 +19,9 @@ WaveletTrendEnergyFactor::CodeState::CodeState(const WaveTrendConfig& cfg)
             cfg.levels_J,
             (cfg.wavelet == "sym4"
                  ? math::wavelet_sym4()
-                 : math::wavelet_db4())) {}
+                 : math::wavelet_db4())) {
+    window_size = cfg.window_size;
+}
 
 // =====================[ 构造 & 配置 ]=====================
 
@@ -46,6 +49,9 @@ WaveletTrendEnergyFactor::WaveletTrendEnergyFactor(
     _cfg.trend_start_j = jt;
 
     _cfg.wavelet    = RC().get("wave_trend.wavelet",    _cfg.wavelet);
+    _window_sizes   = factorlib::config::load_window_sizes("wave_trend", _cfg.window_size);
+    auto freq_cfg   = factorlib::config::load_time_frequencies("wave_trend");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 }
 
 // =====================[ DataBus topic 注册 ]=====================
@@ -57,35 +63,49 @@ void WaveletTrendEnergyFactor::register_topics(std::size_t capacity) {
 
 // =====================[ 状态管理 ]=====================
 
-void WaveletTrendEnergyFactor::ensure_state(const std::string& code) {
-    if (_states.find(code) != _states.end()) return;
-    _states.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(code),
-                    std::forward_as_tuple(_cfg));
+WaveletTrendEnergyFactor::CodeState& WaveletTrendEnergyFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
+    if (it == _states.end()) {
+        auto cfg = _cfg;
+        cfg.window_size = scope.window > 0 ? scope.window : _cfg.window_size;
+        it = _states.emplace(std::piecewise_construct,
+                             std::forward_as_tuple(key),
+                             std::forward_as_tuple(cfg)).first;
+    }
+    return it->second;
 }
 
 void WaveletTrendEnergyFactor::on_code_added(const std::string& code) {
-    ensure_state(code);
+    const auto& freqs = get_time_frequencies();
+    for (int freq : freqs) {
+        for (int window : _window_sizes) {
+            (void)ensure_state(ScopeKey{code, freq, window});
+        }
+    }
 }
 
 // =====================[ 统一价格入口 ]=====================
 
-void WaveletTrendEnergyFactor::on_price_event(const std::string& code,
+void WaveletTrendEnergyFactor::on_price_event(const std::string& code_raw,
                                               int64_t ts_ms,
                                               double price) {
     if (!(price > 0.0)) return;
 
-    ensure_state(code);
-    auto& st = _states.at(code);
+    ensure_code(code_raw);
+    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        auto& st = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
-    if (!st.modwt.push(price)) {
-        LOG_DEBUG("WaveletTrendEnergy: push failed, code={}, price={}", code, price);
-        return;
-    }
+        if (!st.modwt.push(price)) {
+            LOG_DEBUG("WaveletTrendEnergy: push failed, code={}, price={}", scoped_code, price);
+            return;
+        }
 
-    if (st.modwt.ready()) {
-        compute_and_publish(code, st, ts_ms);
-    }
+        if (st.modwt.ready()) {
+            compute_and_publish(scoped_code, st, ts_ms);
+        }
+    });
 }
 
 void WaveletTrendEnergyFactor::compute_and_publish(const std::string& code,

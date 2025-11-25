@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 
@@ -20,6 +21,9 @@ VolumeMGFFactor::VolumeMGFFactor(const std::vector<std::string>& codes,
         ws = 128;
     }
     _cfg.window_size = ws;
+    _window_sizes = factorlib::config::load_window_sizes("vol_mgf", _cfg.window_size);
+    auto freq_cfg = factorlib::config::load_time_frequencies("vol_mgf");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 
     double t = RC().getd("vol_mgf.t", _cfg.t);
     if (!(t > 0.0)) {
@@ -38,48 +42,63 @@ void VolumeMGFFactor::register_topics(size_t capacity) {
 
 // =====================[ code 初始化 ]=====================
 
-void VolumeMGFFactor::ensure_state(const std::string& code) {
-    if (_states.find(code) != _states.end()) return;
-    _states.emplace(code, CodeState(_cfg));
+VolumeMGFFactor::CodeState& VolumeMGFFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
+    if (it == _states.end()) {
+        VolumeMGFConfig cfg = _cfg;
+        cfg.window_size = scope.window > 0 ? scope.window : _cfg.window_size;
+        it = _states.emplace(std::move(key), CodeState(cfg)).first;
+    }
+    return it->second;
 }
 
 void VolumeMGFFactor::on_code_added(const std::string& code) {
-    ensure_state(code);
+    const auto& freqs = get_time_frequencies();
+    for (int freq : freqs) {
+        for (int window : _window_sizes) {
+            (void)ensure_state(ScopeKey{code, freq, window});
+        }
+    }
 }
 
 // =====================[ 统一事件入口 ]=====================
 
-void VolumeMGFFactor::on_volume_event(const std::string& code,
+void VolumeMGFFactor::on_volume_event(const std::string& code_raw,
                                       int64_t ts_ms,
                                       double volume) {
     if (!(volume > 0.0)) {
         return;
     }
-    ensure_state(code);
-    auto& S = _states.at(code);
+    ensure_code(code_raw);
+    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        auto& S = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
     // 初始化 max_size（允许在运行时调整 window_size 后，旧 state 重建）
-    if (S.max_size != _cfg.window_size) {
-        S.max_size = _cfg.window_size;
+        int window_size = scope.window > 0 ? scope.window : _cfg.window_size;
+        if (S.max_size != window_size) {
+            S.max_size = window_size;
         S.window.clear();
         S.sum_exp = 0.0;
     }
 
-    double e_new = std::exp(_cfg.t * volume);
+        double e_new = std::exp(_cfg.t * volume);
 
-    if (static_cast<int>(S.window.size()) == S.max_size) {
-        double v_old = S.window.front();
-        S.window.pop_front();
-        double e_old = std::exp(_cfg.t * v_old);
-        S.sum_exp -= e_old;
-    }
+        if (S.max_size > 0 && static_cast<int>(S.window.size()) == S.max_size) {
+            double v_old = S.window.front();
+            S.window.pop_front();
+            double e_old = std::exp(_cfg.t * v_old);
+            S.sum_exp -= e_old;
+        }
 
     S.window.push_back(volume);
     S.sum_exp += e_new;
 
     if (!S.window.empty()) {
-        compute_and_publish(code, S, ts_ms);
-    }
+            compute_and_publish(scoped_code, S, ts_ms);
+        }
+    });
 }
 
 void VolumeMGFFactor::compute_and_publish(const std::string& code,

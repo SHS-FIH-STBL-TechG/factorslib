@@ -16,6 +16,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 #include "ifactor.h"
 #include "utils/types.h"
 #include "utils/databus.h"
@@ -52,9 +53,10 @@ private:
         void init(const HawkesCfg& c) { hawkes = math::HawkesIntensity(c.mu, c.alpha, c.beta, c.dt); inited=true; }
     };
     HawkesCfg _cfg;
+    std::vector<int> _window_sizes; ///< Hawkes 没有窗口概念，这里占位以复用 for_each_scope
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
 };
 
 } // namespace factorlib

@@ -69,21 +69,22 @@ private:
     };
 
     PcaStructureStabilityConfig _cfg;
+    std::vector<int> _window_sizes; ///< 允许不同窗口长度的结构稳定性并行计算
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
 
     /// 从 Bar 构造特征向量
     std::vector<double> make_features(const Bar& b,
                                       double ret) const;
 
     /// 统一价格事件入口
-    void on_price_event(const std::string& code,
+    void on_price_event(const std::string& code_raw,
                         int64_t ts_ms,
                         const Bar& b);
 
     /// 计算结构稳定性并发布
-    void maybe_publish(const std::string& code,
+    void maybe_publish(const std::string& scoped_code,
                        CodeState& st,
                        int64_t ts_ms);
 };

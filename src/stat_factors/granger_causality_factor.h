@@ -74,32 +74,36 @@ private:
         std::deque<double> x_win;        ///< OFI 序列
         std::deque<double> y_win;        ///< dMid 序列
 
-        int d_r {0}, d_u {0};
+        int d_r {0}, d_u {0};      ///< 回归方程维度
         math::SlidingNormalEq<double> ne_r {1, 240};
         math::SlidingNormalEq<double> ne_u {1, 240};
 
         NmsBucketAggregator bucket {1000};
         int64_t last_bucket_ts {0};
+        int window_size {0};
+
+        CodeState(const GrangerConfig& cfg, int window);
     };
 
-    void on_any_event_(const std::string& code, int64_t ts_ms,
+    void on_any_event_(const ScopeKey& scope, int64_t ts_ms,
                        const std::optional<QuoteDepth>& qopt,
                        const std::optional<Transaction>& topt,
                        const std::optional<Entrust>& eopt);
 
-    void ensure_code_(const std::string& code);
-    void close_bucket_and_push_(const std::string& code, const BucketOutputs& bkt);
-    void emit_sample_event_driven_(const std::string& code, int64_t ts_ms, double y_t);
+    CodeState& ensure_state(const ScopeKey& scope);
+    void close_bucket_and_push_(const ScopeKey& scope, const BucketOutputs& bkt);
+    void emit_sample_event_driven_(const ScopeKey& scope, int64_t ts_ms, double y_t);
 
-    void push_sample_and_update_(const std::string& code, int64_t ts_ms,
+    void push_sample_and_update_(const ScopeKey& scope, int64_t ts_ms,
                                  double y_t,
                                  const std::vector<double>& y_lags,
                                  const std::vector<double>& x_lags);
 
-    void publish_strength_(const std::string& code, int64_t ts_ms, double p) const;
+    void publish_strength_(const ScopeKey& scope, int64_t ts_ms, double p) const;
 
 private:
     GrangerConfig _cfg;
+    std::vector<int> _window_sizes; ///< [section.window_sizes] 配置解析结果
     std::unordered_map<std::string, CodeState> _states;
 };
 

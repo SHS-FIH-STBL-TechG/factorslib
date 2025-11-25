@@ -5,11 +5,21 @@
 #include <Eigen/Dense>
 
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
+#include "utils/config_utils.h"
 #include "utils/trading_time.h"
 using factorlib::config::RC;
 namespace factorlib {
 
     using Vec = Eigen::VectorXd;
+
+    GrangerCausalityFactor::CodeState::CodeState(const GrangerConfig& cfg, int window)
+        : d_r(1 + std::max(0, cfg.p_lags))
+        , d_u(1 + std::max(0, cfg.p_lags) + std::max(0, cfg.q_lags))
+        , ne_r(d_r, window)
+        , ne_u(d_u, window)
+        , bucket(cfg.bucket_ms)
+        , window_size(window) {}
 
     // ===== 构造 / 注册 =====
     GrangerCausalityFactor::GrangerCausalityFactor(const std::vector<std::string>& codes,
@@ -28,11 +38,15 @@ namespace factorlib {
         // 发布/数值处理相关
         _cfg.use_neglog10  = RC().getb ("granger.use_neglog10",  _cfg.use_neglog10);
         _cfg.strength_clip = RC().getd ("granger.strength_clip", _cfg.strength_clip);
+        _window_sizes = factorlib::config::load_window_sizes("granger", _cfg.window_size);
+        auto freq_cfg = factorlib::config::load_time_frequencies("granger");
+        if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 
         //选择数据来源
         const std::string fm = RC().get("granger.feed_mode", "");
         if (fm == "aggregated") _cfg.feed_mode = config::FeedMode::Aggregated;
         else if (fm == "event") _cfg.feed_mode = config::FeedMode::EventDriven;
+        _window_sizes = factorlib::config::load_window_sizes("granger", _cfg.window_size);
     }
 
 
@@ -44,12 +58,20 @@ namespace factorlib {
 
     // ===== BaseFactor 钩子：首次见到某个 code =====
     void GrangerCausalityFactor::on_code_added(const std::string& code) {
-        ensure_code_(code);
+        const auto& freqs = get_time_frequencies();
+        for (int freq : freqs) {
+            for (int window : _window_sizes) {
+                (void)ensure_state(ScopeKey{code, freq, window});
+            }
+        }
     }
 
     // ===== IFactor 事件入口 =====
     void GrangerCausalityFactor::on_quote(const QuoteDepth& q) {
-        on_any_event_(q.instrument_id, q.data_time_ms, q, std::nullopt, std::nullopt);
+        BaseFactor::ensure_code(q.instrument_id);
+        for_each_scope(q.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+            on_any_event_(scope, q.data_time_ms, q, std::nullopt, std::nullopt);
+        });
     }
 
     void GrangerCausalityFactor::on_tick(const CombinedTick& x) {
@@ -63,7 +85,10 @@ namespace factorlib {
             t.volume        = x.volume;
             t.bid_no        = x.bid_no;
             t.ask_no        = x.ask_no;
-            on_any_event_(t.instrument_id, t.data_time_ms, std::nullopt, t, std::nullopt);
+            BaseFactor::ensure_code(t.instrument_id);
+            for_each_scope(t.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+                on_any_event_(scope, t.data_time_ms, std::nullopt, t, std::nullopt);
+            });
         } else {
             Entrust e{};
             e.instrument_id = x.instrument_id;
@@ -73,19 +98,28 @@ namespace factorlib {
             e.side          = x.side;
             e.volume        = x.volume;
             e.order_id      = x.order_id;
-            on_any_event_(e.instrument_id, e.data_time_ms, std::nullopt, std::nullopt, e);
+            BaseFactor::ensure_code(e.instrument_id);
+            for_each_scope(e.instrument_id, _window_sizes, [&](const ScopeKey& scope) {
+                on_any_event_(scope, e.data_time_ms, std::nullopt, std::nullopt, e);
+            });
         }
     }
 
 
     // ===== 强制冲桶（仅聚合模式有意义） =====
     bool GrangerCausalityFactor::force_flush(const std::string& code) {
-        auto it = _states.find(code);
+        auto scoped = code;
+        auto scope = parse_scope_code(code);
+        auto it = _states.find(scoped);
+        if (it == _states.end()) {
+            scoped = scope.as_bus_code();
+            it = _states.find(scoped);
+        }
         if (it == _states.end()) return false;
         if (_cfg.feed_mode == config::FeedMode::Aggregated) {
             BucketOutputs out{};
             if (it->second.bucket.force_flush(out)) {
-                close_bucket_and_push_(code, out);
+                close_bucket_and_push_(scope, out);
                 it->second.last_bucket_ts = out.bucket_end_ms;
                 return true;
             }
@@ -95,35 +129,29 @@ namespace factorlib {
     }
 
     // ===== 内部：确保 code 状态 =====
-    void GrangerCausalityFactor::ensure_code_(const std::string& code) {
-        if (_states.find(code) != _states.end()) return;
-
-        CodeState st;
-        const int p = std::max(0, _cfg.p_lags);
-        const int q = std::max(0, _cfg.q_lags);
-        st.d_r = 1 + p;
-        st.d_u = 1 + p + q;
-        st.ne_r = math::SlidingNormalEq<double>(st.d_r, _cfg.window_size);
-        st.ne_u = math::SlidingNormalEq<double>(st.d_u, _cfg.window_size);
-
-        st.bucket.set_bucket_ms(_cfg.bucket_ms);
-
-        _states.emplace(code, std::move(st));
+    GrangerCausalityFactor::CodeState& GrangerCausalityFactor::ensure_state(const ScopeKey& scope) {
+        auto key = scope.as_bus_code();
+        auto it = _states.find(key);
+        if (it == _states.end()) {
+            int window = scope.window > 0 ? scope.window : _cfg.window_size;
+            it = _states.emplace(key, CodeState(_cfg, window)).first;
+        }
+        return it->second;
     }
 
     // ===== 内部：统一事件入口（分为 聚合 / 逐条） =====
-    void GrangerCausalityFactor::on_any_event_(const std::string& code, int64_t ts_ms,
+    void GrangerCausalityFactor::on_any_event_(const ScopeKey& scope, int64_t ts_ms,
                                                const std::optional<QuoteDepth>& qopt,
                                                const std::optional<Transaction>& topt,
                                                const std::optional<Entrust>& eopt) {
-        ensure_code_(code);
-        auto& S = _states[code];
+        auto& S = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
         // ---------- 路径一：聚合模式 ----------
         if (_cfg.feed_mode == config::FeedMode::Aggregated) {
             BucketOutputs out{};
             if (S.bucket.ensure_bucket(ts_ms, out)) {
-                close_bucket_and_push_(code, out);
+                close_bucket_and_push_(scope, out);
                 S.last_bucket_ts = out.bucket_end_ms;
             }
             if (qopt) S.bucket.on_quote(*qopt);
@@ -146,7 +174,7 @@ namespace factorlib {
                 double mid_now = 0.5 * (q.bid_price + q.ask_price);
                 if (S.last_mid.has_value()) {
                     double y_t = mid_now - *S.last_mid;
-                    emit_sample_event_driven_(code, ts_ms, y_t);
+                    emit_sample_event_driven_(scope, ts_ms, y_t);
                 }
                 S.last_mid = mid_now;
             }
@@ -154,9 +182,10 @@ namespace factorlib {
     }
 
     // ===== 内部：聚合模式收拢桶 -> 产出样本 =====
-    void GrangerCausalityFactor::close_bucket_and_push_(const std::string& code,
+    void GrangerCausalityFactor::close_bucket_and_push_(const ScopeKey& scope,
                                                         const BucketOutputs& bkt) {
-        auto& S = _states[code];
+        auto& S = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
         double mid_now = bkt.midprice_last;
         if (!(mid_now > 0)) return;
@@ -174,44 +203,45 @@ namespace factorlib {
 
         S.x_win.push_back(x_t);
         S.y_win.push_back(y_t);
-        while ((int)S.x_win.size() > _cfg.window_size) S.x_win.pop_front();
-        while ((int)S.y_win.size() > _cfg.window_size) S.y_win.pop_front();
+        while ((int)S.x_win.size() > S.window_size) S.x_win.pop_front();
+        while ((int)S.y_win.size() > S.window_size) S.y_win.pop_front();
 
         if ((int)S.y_win.size() <= std::max(_cfg.p_lags, _cfg.q_lags)) return;
         std::vector<double> y_lags(_cfg.p_lags), x_lags(_cfg.q_lags);
         for (int i=0;i<_cfg.p_lags;++i) y_lags[i] = S.y_win[(int)S.y_win.size()-1 - (i+1)];
         for (int j=0;j<_cfg.q_lags;++j) x_lags[j] = S.x_win[(int)S.x_win.size()-1 - (j+1)];
 
-        push_sample_and_update_(code, bkt.bucket_end_ms, y_t, y_lags, x_lags);
+        push_sample_and_update_(scope, bkt.bucket_end_ms, y_t, y_lags, x_lags);
     }
 
     // ===== 内部：逐条模式在 mid 刷新时产出样本 =====
-    void GrangerCausalityFactor::emit_sample_event_driven_(const std::string& code,
+    void GrangerCausalityFactor::emit_sample_event_driven_(const ScopeKey& scope,
                                                            int64_t ts_ms, double y_t) {
-        auto& S = _states[code];
+        auto& S = ensure_state(scope);
 
         double x_t = S.pending_ofi;
         S.pending_ofi = 0.0;
 
         S.x_win.push_back(x_t);
         S.y_win.push_back(y_t);
-        while ((int)S.x_win.size() > _cfg.window_size) S.x_win.pop_front();
-        while ((int)S.y_win.size() > _cfg.window_size) S.y_win.pop_front();
+        while ((int)S.x_win.size() > S.window_size) S.x_win.pop_front();
+        while ((int)S.y_win.size() > S.window_size) S.y_win.pop_front();
 
         if ((int)S.y_win.size() <= std::max(_cfg.p_lags, _cfg.q_lags)) return;
         std::vector<double> y_lags(_cfg.p_lags), x_lags(_cfg.q_lags);
         for (int i=0;i<_cfg.p_lags;++i) y_lags[i] = S.y_win[(int)S.y_win.size()-1 - (i+1)];
         for (int j=0;j<_cfg.q_lags;++j) x_lags[j] = S.x_win[(int)S.x_win.size()-1 - (j+1)];
 
-        push_sample_and_update_(code, ts_ms, y_t, y_lags, x_lags);
+        push_sample_and_update_(scope, ts_ms, y_t, y_lags, x_lags);
     }
 
     // ===== 内部：核心回归 / 统计量 / 发布 =====
-    void GrangerCausalityFactor::push_sample_and_update_(const std::string& code, int64_t ts_ms,
+    void GrangerCausalityFactor::push_sample_and_update_(const ScopeKey& scope, int64_t ts_ms,
                                                          double y_t,
                                                          const std::vector<double>& y_lags,
                                                          const std::vector<double>& x_lags) {
-        auto& S = _states[code];
+        auto& S = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
         const int p = _cfg.p_lags;
         const int q = _cfg.q_lags;
 
@@ -227,7 +257,7 @@ namespace factorlib {
         S.ne_r.push(xr, y_t);
         S.ne_u.push(xu, y_t);
 
-        const int N   = std::min((int)S.y_win.size(), _cfg.window_size);
+        const int N   = std::min((int)S.y_win.size(), S.window_size);
         const int df2 = N - (p + q + 1);
         if (N < std::max(_cfg.min_effective, p + q + 4) || df2 <= 0) return;
 
@@ -255,14 +285,15 @@ namespace factorlib {
             pval = (F <= 0.0 ? 1.0 : std::numeric_limits<double>::min());
         }
 
-        publish_strength_(code, ts_ms, pval);
+        publish_strength_(scope, ts_ms, pval);
 
         LOG_DEBUG("[{}] ts={} N={} F={} p={} RSSr={} RSSu={}",
-            code, ts_ms, N, F, pval, RSSr, RSSu);
+            scoped_code, ts_ms, N, F, pval, RSSr, RSSu);
     }
 
-    void GrangerCausalityFactor::publish_strength_(const std::string& code,
+    void GrangerCausalityFactor::publish_strength_(const ScopeKey& scope,
                                                    int64_t ts_ms, double p) const {
+        const std::string scoped_code = scope.as_bus_code();
         double value = p;
         if (_cfg.use_neglog10) {
             if (p <= 0) p = std::numeric_limits<double>::min();
@@ -270,8 +301,8 @@ namespace factorlib {
             if (value > _cfg.strength_clip) value = _cfg.strength_clip;
             if (!std::isfinite(value)) value = 0.0;
         }
-        safe_publish<double>(TOP_GRANGER_STRENGTH, code, ts_ms, value);
-        safe_publish<double>(TOP_GRANGER_PVAL,     code, ts_ms, p);  // 始终发 p
+        safe_publish<double>(TOP_GRANGER_STRENGTH, scoped_code, ts_ms, value);
+        safe_publish<double>(TOP_GRANGER_PVAL,     scoped_code, ts_ms, p);
     }
 
 } // namespace factorlib

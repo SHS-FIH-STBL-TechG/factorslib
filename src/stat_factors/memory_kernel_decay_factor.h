@@ -23,12 +23,15 @@
 #include <unordered_map>
 #include <memory>
 #include <cmath>
+#include <vector>
 
 #include "ifactor.h"
 #include "utils/types.h"
 #include "utils/databus.h"
 #include "utils/log.h"
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
+#include "utils/config_utils.h"
 #include "math/memory_kernel.h"
 #include "math/rolling_autocorr.h"
 
@@ -50,6 +53,9 @@ public:
         _cfg.window_size = config::RC().geti("mem_kernel.window_size", _cfg.window_size);
         _cfg.L           = config::RC().geti("mem_kernel.L",           _cfg.L);
         _cfg.alpha       = config::RC().getd("mem_kernel.alpha",       _cfg.alpha);
+        _window_sizes    = config::load_window_sizes("mem_kernel", _cfg.window_size);
+        auto freq_cfg = config::load_time_frequencies("mem_kernel");
+        if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
     }
 
     static void register_topics(size_t capacity=120) {
@@ -59,9 +65,12 @@ public:
     void on_quote(const QuoteDepth& /*q*/) override {}
     void on_tick (const CombinedTick& /*x*/) override {}
     void on_bar  (const Bar& b) override {
-        const std::string& code = b.instrument_id;
-        ensure_code_(code);
-        auto* st = _states[code].get();
+        const std::string& code_raw = b.instrument_id;
+        ensure_code(code_raw);
+        for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+            auto* st = ensure_state(scope);
+            if (!st) return;
+            const std::string scoped_code = scope.as_bus_code();
         double p = b.close;
         if (!std::isfinite(p) || p <= 0) return;
         if (st->last_close > 0) {
@@ -70,12 +79,13 @@ public:
             if (st->mk->ready()) {
                 double M = st->mk->value();
                 if (std::isfinite(M)) {
-                    DataBus::instance().publish<double>(TOP_MEMK, code, b.data_time_ms, M);
-                    LOG_DEBUG("[{}] {} @{} M={:.6f}", TOP_MEMK, code, b.data_time_ms, M);
+                    DataBus::instance().publish<double>(TOP_MEMK, scoped_code, b.data_time_ms, M);
+                    LOG_DEBUG("[{}] {} @{} M={:.6f}", TOP_MEMK, scoped_code, b.data_time_ms, M);
                 }
             }
         }
         st->last_close = p;
+        });
     }
 
     bool force_flush(const std::string& /*code*/) override { return false; }
@@ -86,17 +96,23 @@ private:
         double last_close = 0.0;
     };
     std::unordered_map<std::string, std::unique_ptr<CodeState>> _states;
+    std::vector<int> _window_sizes; ///< 支持多窗口配置（默认仅使用 _cfg.window_size）
     MemoryKernelConfig _cfg;
 
-    void ensure_code_(const std::string& code) {
-        if (_states.find(code) != _states.end()) return;
-        auto st = std::make_unique<CodeState>();
-        st->mk = std::make_unique< math::MemoryKernelEstimator<double> >(
-            static_cast<std::size_t>(_cfg.window_size),
-            static_cast<std::size_t>(_cfg.L),
-            _cfg.alpha
-        );
-        _states.emplace(code, std::move(st));
+    CodeState* ensure_state(const ScopeKey& scope) {
+        auto key = scope.as_bus_code();
+        auto it = _states.find(key);
+        if (it == _states.end()) {
+            auto st = std::make_unique<CodeState>();
+            const int window = scope.window > 0 ? scope.window : _cfg.window_size;
+            st->mk = std::make_unique< math::MemoryKernelEstimator<double> >(
+                static_cast<std::size_t>(window),
+                static_cast<std::size_t>(_cfg.L),
+                _cfg.alpha
+            );
+            it = _states.emplace(std::move(key), std::move(st)).first;
+        }
+        return it->second.get();
     }
 };
 

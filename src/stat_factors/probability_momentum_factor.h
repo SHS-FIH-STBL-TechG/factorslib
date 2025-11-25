@@ -8,6 +8,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "ifactor.h"
 #include "utils/types.h"
@@ -56,16 +57,18 @@ private:
     struct CodeState {
         bool   has_last_price = false;
         double last_price     = 0.0;
+        int    window_size    = 0;   ///< 当前 scope 生效的窗口长度
         math::WeightedSlidingWindowStats<double, double> stats; ///< 加权滑动统计
     };
 
     ProbMomentumConfig _cfg;
+    std::vector<int> _window_sizes; ///< 从配置解析出来的所有窗口集合
     std::unordered_map<std::string, CodeState> _states;
 
-    void ensure_state(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
 
     /// 统一价格事件入口：任何来源（快照/逐笔/K 线）的价格都走这里
-    void on_price_event(const std::string& code,
+    void on_price_event(const std::string& code_raw,
                         int64_t ts_ms,
                         double price,
                         double volume);

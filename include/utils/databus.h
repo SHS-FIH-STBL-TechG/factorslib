@@ -209,6 +209,16 @@ private:
                 for(auto& f: it->second){ f(code, ts, v); }
             }
         }
+
+        // 当调用方只传“纯 code”时，尝试匹配以 code 为前缀的 scope key，确保老逻辑仍能取到数据
+        std::string resolve_code_key(const std::string& code) const {
+            if (store.find(code) != store.end()) return code;
+            std::string prefix = code + "|f";
+            for (const auto& kv : store) {
+                if (kv.first.rfind(prefix, 0) == 0) return kv.first;
+            }
+            return {};
+        }
     };
 
     DataBus()=default;
@@ -264,7 +274,9 @@ bool DataBus::get_latest(const std::string& topic, const std::string& code, T& o
     std::lock_guard<std::mutex> lk(_m);
     auto ch = get_channel<T>(topic);
     if(!ch) return false;
-    auto it = ch->store.find(code);
+    auto key = ch->resolve_code_key(code);
+    if (key.empty()) return false;
+    auto it = ch->store.find(key);
     if(it == ch->store.end() || it->second.empty()) return false;
     const auto& kv = it->second.back();
     out = kv.second;
@@ -277,7 +289,9 @@ bool DataBus::get_by_time_exact(const std::string& topic, const std::string& cod
     std::lock_guard<std::mutex> lk(_m);
     auto ch = get_channel<T>(topic);
     if(!ch) return false;
-    auto it = ch->store.find(code);
+    auto key = ch->resolve_code_key(code);
+    if (key.empty()) return false;
+    auto it = ch->store.find(key);
     if(it == ch->store.end()) return false;
     const auto& dq = it->second;
     for(const auto& kv : dq){
@@ -292,7 +306,9 @@ std::vector<std::pair<int64_t, T>> DataBus::get_last_n(const std::string& topic,
     std::vector<std::pair<int64_t, T>> res;
     auto ch = get_channel<T>(topic);
     if(!ch) return res;
-    auto it = ch->store.find(code);
+    auto key = ch->resolve_code_key(code);
+    if (key.empty()) return res;
+    auto it = ch->store.find(key);
     if(it == ch->store.end()) return res;
     const auto& dq = it->second;
     if(n > dq.size()) n = dq.size();
@@ -308,7 +324,9 @@ void DataBus::subscribe(const std::string& topic, const std::string& code,
     std::lock_guard<std::mutex> lk(_m);
     auto ch = get_channel<T>(topic);
     if(!ch) return;
-    ch->subs[code].push_back(std::move(cb));
+    auto key = ch->resolve_code_key(code);
+    if (key.empty()) key = code;
+    ch->subs[key].push_back(std::move(cb));
 }
 
 template<typename T>
@@ -319,9 +337,11 @@ bool DataBus::wait_for_time_exact(const std::string& topic, const std::string& c
     std::unique_lock<std::mutex> lk(_m);
     auto ch = get_channel<T>(topic);
     if(!ch) return false;
-    auto& cv = ch->cvs[code];
+    auto key = ch->resolve_code_key(code);
+    if (key.empty()) key = code;
+    auto& cv = ch->cvs[key];
     while(true){
-        auto it = ch->store.find(code);
+        auto it = ch->store.find(key);
         if(it != ch->store.end()){
             for(const auto& kv : it->second){
                 if(kv.first == ts_ms){ out = kv.second; return true; }
@@ -339,9 +359,11 @@ bool DataBus::wait_for_time_at_least(const std::string& topic, const std::string
     std::unique_lock<std::mutex> lk(_m);
     auto ch = get_channel<T>(topic);
     if(!ch) return false;
-    auto& cv = ch->cvs[code];
+    auto key = ch->resolve_code_key(code);
+    if (key.empty()) key = code;
+    auto& cv = ch->cvs[key];
     while(true){
-        auto it = ch->store.find(code);
+        auto it = ch->store.find(key);
         if(it != ch->store.end() && !it->second.empty()){
             const auto& back = it->second.back();
             if(back.first >= ts_ms){ out = back.second; return true; }

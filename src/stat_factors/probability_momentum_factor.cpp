@@ -8,6 +8,7 @@
 #include "math/numeric_utils.h"
 #include "math/distributions.h"
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 
@@ -31,6 +32,9 @@ ProbabilityMomentumFactor::ProbabilityMomentumFactor(
         ws = 60;
     }
     _cfg.window_size = ws;
+    _window_sizes = factorlib::config::load_window_sizes("prob_mom", _cfg.window_size);
+    auto freq_cfg = factorlib::config::load_time_frequencies("prob_mom");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 
     double min_w = RC().getd("prob_mom.min_total_weight", _cfg.min_total_weight);
     if (!(min_w > 0.0)) {
@@ -68,17 +72,29 @@ void ProbabilityMomentumFactor::register_topics(size_t capacity) {
 
 // =====================[ 内部辅助 ]=====================
 
-void ProbabilityMomentumFactor::ensure_state(const std::string& code) {
-    auto it = _states.find(code);
+ProbabilityMomentumFactor::CodeState& ProbabilityMomentumFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
     if (it == _states.end()) {
         CodeState st;
-        st.stats.reset(static_cast<std::size_t>(_cfg.window_size));
-        _states.emplace(code, std::move(st));
+        // 每个 scope 都可以拥有独立窗口，默认回落到 _cfg.window_size
+        st.window_size = scope.window > 0 ? scope.window : _cfg.window_size;
+        // SlidingWindowStats 需要知道窗口容量，因此这里重新 reset
+        st.stats.reset(static_cast<std::size_t>(st.window_size));
+        it = _states.emplace(std::move(key), std::move(st)).first;
+        return it->second;
     }
+    return it->second;
 }
 
 void ProbabilityMomentumFactor::on_code_added(const std::string& code) {
-    ensure_state(code);
+    // 预先为每个 (code, freq, window) 初始化 state，可避免运行时首次访问的锁竞争
+    const auto& freqs = get_time_frequencies();
+    for (int freq : freqs) {
+        for (int window : _window_sizes) {
+            (void)ensure_state(ScopeKey{code, freq, window});
+        }
+    }
 }
 
 void ProbabilityMomentumFactor::compute_and_publish(
@@ -133,41 +149,45 @@ void ProbabilityMomentumFactor::compute_and_publish(
 
 // 统一价格事件入口
 void ProbabilityMomentumFactor::on_price_event(
-        const std::string& code,
+        const std::string& code_raw,
         int64_t ts_ms,
         double price,
         double volume) {
 
     if (!(price > 0.0)) return;
 
-    ensure_state(code);
-    auto& S = _states[code];
+    ensure_code(code_raw);
+    // 遍历“相同 code 下所有频率 + 窗口”的组合，每个组合都会独立维护一份统计
+    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        auto& S = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
-    if (!S.has_last_price) {
-        S.has_last_price = true;
-        S.last_price     = price;
-        return;
-    }
+        if (!S.has_last_price) {
+            S.has_last_price = true;
+            S.last_price     = price;
+            return;
+        }
 
-    if (!(S.last_price > 0.0) || !std::isfinite(S.last_price)) {
+        if (!(S.last_price > 0.0) || !std::isfinite(S.last_price)) {
+            S.last_price = price;
+            return;
+        }
+
+        // 对数收益率，使用通用工具
+        double r = NumericUtils<double>::log_return(price, S.last_price);
+        if (!std::isfinite(r)) {
+            S.last_price = price;
+            return;
+        }
+
         S.last_price = price;
-        return;
-    }
 
-    // 对数收益率，使用通用工具
-    double r = NumericUtils<double>::log_return(price, S.last_price);
-    if (!std::isfinite(r)) {
-        S.last_price = price;
-        return;
-    }
+        // 成交量权重。为防止 0 影响，设个最小权重 1.0
+        double w = (volume > 0.0 ? volume : 1.0);
 
-    S.last_price = price;
-
-    // 成交量权重。为防止 0 影响，设个最小权重 1.0
-    double w = (volume > 0.0 ? volume : 1.0);
-
-    S.stats.push(r, w);
-    compute_and_publish(code, S, ts_ms);
+        S.stats.push(r, w);
+        compute_and_publish(scoped_code, S, ts_ms);
+    });
 }
 
 // =====================[ 事件入口 ]=====================

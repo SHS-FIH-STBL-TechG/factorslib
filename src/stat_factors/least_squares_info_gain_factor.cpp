@@ -9,6 +9,7 @@
 #include "utils/log.h"
 #include "math/distributions.h"
 #include "../config/runtime_config.h"
+#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 
@@ -26,6 +27,9 @@ LeastSquaresInfoGainFactor::LeastSquaresInfoGainFactor(
         ws = 30;
     }
     _cfg.window_size = ws;
+    _window_sizes = factorlib::config::load_window_sizes("lsig", _cfg.window_size);
+    auto freq_cfg = factorlib::config::load_time_frequencies("lsig");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 }
 
 void LeastSquaresInfoGainFactor::register_topics(size_t capacity) {
@@ -37,26 +41,40 @@ void LeastSquaresInfoGainFactor::register_topics(size_t capacity) {
 
 // ---------------- 内部：状态初始化 ----------------
 
-void LeastSquaresInfoGainFactor::ensure_state(const std::string& code) {
-    auto it = _states.find(code);
+LeastSquaresInfoGainFactor::CodeState& LeastSquaresInfoGainFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
     if (it == _states.end()) {
         CodeState s;
-        s.ols     = std::make_unique<SlidingOLS>(2, _cfg.window_size);
-        s.y_stats = std::make_unique<SlidingStats>(_cfg.window_size);
-        _states.emplace(code, std::move(s));
+        s.window_size = scope.window > 0 ? scope.window : _cfg.window_size;
+        s.ols     = std::make_unique<SlidingOLS>(2, s.window_size);
+        s.y_stats = std::make_unique<SlidingStats>(s.window_size);
+        it = _states.emplace(std::move(key), std::move(s)).first;
+        return it->second;
+    }
+    if (!it->second.ols || it->second.window_size != (scope.window > 0 ? scope.window : _cfg.window_size)) {
+        it->second.window_size = scope.window > 0 ? scope.window : _cfg.window_size;
+        it->second.ols = std::make_unique<SlidingOLS>(2, it->second.window_size);
+        it->second.y_stats = std::make_unique<SlidingStats>(it->second.window_size);
     } else {
         if (!it->second.ols) {
-            it->second.ols = std::make_unique<SlidingOLS>(2, _cfg.window_size);
+            it->second.ols = std::make_unique<SlidingOLS>(2, it->second.window_size);
         }
         if (!it->second.y_stats) {
-            it->second.y_stats = std::make_unique<SlidingStats>(_cfg.window_size);
+            it->second.y_stats = std::make_unique<SlidingStats>(it->second.window_size);
+        }
+    }
+    return it->second;
+}
+
+void LeastSquaresInfoGainFactor::on_code_added(const std::string& code) {
+    const auto& freqs = get_time_frequencies();
+    for (int freq : freqs) {
+        for (int window : _window_sizes) {
+            (void)ensure_state(ScopeKey{code, freq, window});
         }
     }
 }
-
-    void LeastSquaresInfoGainFactor::on_code_added(const std::string& code) {
-        ensure_state(code);
-    }
 
     // 快照：用中间价
     void LeastSquaresInfoGainFactor::on_quote(const QuoteDepth& q) {
@@ -84,60 +102,64 @@ void LeastSquaresInfoGainFactor::ensure_state(const std::string& code) {
 // ---------------- 统一价格入口：计算 r_t 并推样本 ----------------
 
 void LeastSquaresInfoGainFactor::on_price_event(
-        const std::string& code,
+        const std::string& code_raw,
         int64_t ts_ms,
         double px) {
 
-    ensure_state(code);
-    CodeState& S = _states[code];
+    ensure_code(code_raw);
+    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        CodeState& S = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
-    // 第一次价格，只记录
-    if (!S.has_last_px) {
+        // 第一次价格，只记录
+        if (!S.has_last_px) {
+            S.last_px = px;
+            S.has_last_px = true;
+            S.has_prev_ret = false;
+            return;
+        }
+
+        // 非正价格：重置收益链
+        if (!(px > 0.0) || !(S.last_px > 0.0)) {
+            S.last_px     = px;
+            S.has_prev_ret = false;
+            return;
+        }
+
+        const double r_t = std::log(px / S.last_px);  // ★ ln(P_t / P_{t-1})
         S.last_px = px;
-        S.has_last_px = true;
-        S.has_prev_ret = false;
-        return;
-    }
 
-    // 非正价格：重置收益链
-    if (!(px > 0.0) || !(S.last_px > 0.0)) {
-        S.last_px     = px;
-        S.has_prev_ret = false;
-        return;
-    }
+        if (!std::isfinite(r_t)) {
+            S.has_prev_ret = false;
+            return;
+        }
 
-    const double r_t = std::log(px / S.last_px);  // ★ ln(P_t / P_{t-1})
-    S.last_px = px;
+        // 第一条 r_t：只存，不构造 (x,y)
+        if (!S.has_prev_ret) {
+            S.prev_ret    = r_t;
+            S.has_prev_ret = true;
+            return;
+        }
 
-    if (!std::isfinite(r_t)) {
-        S.has_prev_ret = false;
-        return;
-    }
+        const double x_prev = S.prev_ret;  // r_{t-1}
+        const double y_curr = r_t;         // r_t
+        S.prev_ret = r_t;
 
-    // 第一条 r_t：只存，不构造 (x,y)
-    if (!S.has_prev_ret) {
-        S.prev_ret    = r_t;
-        S.has_prev_ret = true;
-        return;
-    }
-
-    const double x_prev = S.prev_ret;  // r_{t-1}
-    const double y_curr = r_t;         // r_t
-    S.prev_ret = r_t;
-
-    push_sample_and_update(S, code, ts_ms, x_prev, y_curr);
+        push_sample_and_update(S, scope, ts_ms, x_prev, y_curr);
+    });
 }
 
 // ---------------- 推入样本并在满窗后计算因子 ----------------
 
 void LeastSquaresInfoGainFactor::push_sample_and_update(
         CodeState& S,
-        const std::string& code,
+        const ScopeKey& scope,
         int64_t ts_ms,
         double x_prev_ret,
         double y_curr_ret) {
 
     if (!S.ols || !S.y_stats) return;
+    const std::string scoped_code = scope.as_bus_code();
 
     // 1) 推入滑动 OLS & y 统计
     Eigen::VectorXd x(2);
@@ -148,7 +170,7 @@ void LeastSquaresInfoGainFactor::push_sample_and_update(
     S.y_stats->push(y_curr_ret);
 
     const int n        = S.ols->size();
-    const int win_size = _cfg.window_size;
+    const int win_size = S.window_size > 0 ? S.window_size : _cfg.window_size;
 
     // 窗口未满，不产出
     if (n < win_size) {
@@ -170,7 +192,7 @@ void LeastSquaresInfoGainFactor::push_sample_and_update(
     double RSS = 0.0;
     const bool ok = S.ols->solve(beta, RSS);
     if (!ok) {
-        LOG_WARN("LeastSquaresInfoGainFactor: solve 失败 code={}, n={}", code, n);
+        LOG_WARN("LeastSquaresInfoGainFactor: solve 失败 code={}, n={}", scoped_code, n);
         return;
     }
 
@@ -200,9 +222,9 @@ void LeastSquaresInfoGainFactor::push_sample_and_update(
     const double ig_hi = ig + z975 * se;
 
     LOG_DEBUG("LeastSquaresInfoGainFactor: code={} ts={} n={} s0^2={} s1^2={} R={} ig={} lo={} hi={}",
-              code, ts_ms, n, s0_sq, s1_sq, R, ig, ig_lo, ig_hi);
+              scoped_code, ts_ms, n, s0_sq, s1_sq, R, ig, ig_lo, ig_hi);
 
-    publish_all(code, ts_ms, ig, ig_lo, ig_hi);
+    publish_all(scoped_code, ts_ms, ig, ig_lo, ig_hi);
 }
 
 // ---------------- 发布 ----------------

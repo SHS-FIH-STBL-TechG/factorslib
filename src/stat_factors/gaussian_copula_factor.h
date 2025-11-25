@@ -71,6 +71,7 @@ protected:
 
 private:
     GaussianCopulaConfig _cfg;
+    std::vector<int> _window_sizes; ///< 支持多窗口同时运行，列表来源于配置
 
     // 每个代码的原始状态
     struct CodeState {
@@ -101,17 +102,17 @@ private:
     };
     std::unordered_map<std::string, std::unique_ptr<IncrementalState>> _incremental_states;
 
-    /// 确保该代码状态存在（★ 与原版一致，只是内部不再自管 _codes）
-    void ensure_code(const std::string& code);
+    CodeState& ensure_state(const ScopeKey& scope);
+    IncrementalState& ensure_incremental(const ScopeKey& scope);
 
     /// 增量计算条件期望（★ 不改你的算法）
-    double compute_conditional_expectation_incremental(const std::string& code);
+    double compute_conditional_expectation_incremental(const std::string& scoped_code);
 
     /// 全量计算条件期望（保留用于兼容性）
-    double compute_conditional_expectation(const std::string& code);
+    double compute_conditional_expectation(const std::string& scoped_code);
 
     /// 发布因子值（主题固定）
-    void publish_prediction(const std::string& code, double prediction, int64_t timestamp);
+    void publish_prediction(const std::string& scoped_code, double prediction, int64_t timestamp);
 };
 
 } // namespace factorlib

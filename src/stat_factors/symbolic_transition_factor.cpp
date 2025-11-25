@@ -1,5 +1,6 @@
 #include "symbolic_transition_factor.h"
 #include <cmath>
+#include "utils/config_utils.h"
 
 using factorlib::config::RC;
 
@@ -10,13 +11,19 @@ SymbolicTransitionFactor::SymbolicTransitionFactor(const std::vector<std::string
     : BaseFactor("SymbolicTransition", codes), _cfg(cfg) {
     _cfg.window_size = RC().geti("symbolic.window_size", _cfg.window_size);
     _cfg.symbols_k   = RC().geti("symbolic.symbols_k",   _cfg.symbols_k);
+    _window_sizes    = factorlib::config::load_window_sizes("symbolic", _cfg.window_size);
+    auto freq_cfg = factorlib::config::load_time_frequencies("symbolic");
+    if (!freq_cfg.empty()) set_time_frequencies_override(freq_cfg);
 }
 
 
-void SymbolicTransitionFactor::ensure_state(const std::string& code) {
-    if (_states.find(code) != _states.end()) return;
+SymbolicTransitionFactor::CodeState& SymbolicTransitionFactor::ensure_state(const ScopeKey& scope) {
+    auto key = scope.as_bus_code();
+    auto it = _states.find(key);
+    if (it != _states.end()) return it->second;
 
     CodeState st;
+    st.window_size = scope.window > 0 ? scope.window : _cfg.window_size;
     // 创建符号化边界（k等分分箱，这里使用简单的-0.1到0.1范围）
     std::vector<double> edges;
     double min_val = -0.1, max_val = 0.1;
@@ -26,27 +33,30 @@ void SymbolicTransitionFactor::ensure_state(const std::string& code) {
 
     math::Symbolizer<double> symbolizer(edges);
     st.sym = std::make_unique<math::RollingSymbolicDynamics<double>>(
-        static_cast<std::size_t>(_cfg.window_size),
+        static_cast<std::size_t>(st.window_size),
         symbolizer  // 传递 Symbolizer 对象而不是整数
     );
-    _states.emplace(code, std::move(st));
+    it = _states.emplace(std::move(key), std::move(st)).first;
+    return it->second;
 }
 
-void SymbolicTransitionFactor::on_price_event(const std::string& code, int64_t ts, double price) {
-    ensure_state(code);
-    auto& s = _states[code];
+void SymbolicTransitionFactor::on_price_event(const std::string& code_raw, int64_t ts, double price) {
     if (!std::isfinite(price)) return;
+    ensure_code(code_raw);
+    for_each_scope(code_raw, _window_sizes, [&](const ScopeKey& scope) {
+        auto& s = ensure_state(scope);
+        const std::string scoped_code = scope.as_bus_code();
 
-    if (s.has_last && s.last_p>0.0) {
-        double r = std::log(price / s.last_p);
-        s.sym->push(r);
-        maybe_publish(code, ts);
-    }
-    s.last_p = price; s.has_last = true;
+        if (s.has_last && s.last_p>0.0) {
+            double r = std::log(price / s.last_p);
+            s.sym->push(r);
+            maybe_publish(scoped_code, s, ts);
+        }
+        s.last_p = price; s.has_last = true;
+    });
 }
 
-void SymbolicTransitionFactor::maybe_publish(const std::string& code, int64_t ts) {
-    auto& s = _states[code];
+void SymbolicTransitionFactor::maybe_publish(const std::string& code, CodeState& s, int64_t ts) {
     if (!s.sym->ready()) return;
     // 谱半径近似（RollingSymbolicDynamics 内部已维护转移计数/概率）
     double eig1 = s.sym->leading_eigenvalue();
