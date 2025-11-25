@@ -16,6 +16,7 @@ option(FACTORLIB_USE_THIRD_PARTY "Prefer bundled third_party libs" ON)
 option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
 option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
+option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
 # 打印所有相关选项
 message(STATUS "========== factorlib CMake options ==========")
 
@@ -26,6 +27,7 @@ foreach(opt
         FACTORLIB_WITH_DEMO_E2E
         FACTORLIB_BUILD_UNIT_TESTS
         FACTORLIB_BUILD_MATH_TESTS
+        FACTORLIB_ENABLE_PARALLEL_INGRESS
 )
     message(STATUS "  ${opt} = ${${opt}}")
 endforeach()
@@ -118,6 +120,10 @@ else()
             -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             -DFACTORLIB_NO_DEBUG_TRACE=1
     )
+endif()
+
+if (FACTORLIB_ENABLE_PARALLEL_INGRESS)
+    add_definitions(-DFACTORLIB_ENABLE_PARALLEL_INGRESS=1)
 endif()
 
 # ========== 组件：工具库（日志 + 通用工具） ==========

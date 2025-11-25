@@ -5,10 +5,29 @@
 #include "utils/types.h"
 #include "utils/processing_axes.h"
 
+#include <algorithm>
+#ifdef FACTORLIB_ENABLE_PARALLEL_INGRESS
+#include <execution>
+#endif
+
 #include "../../StrategyPlatform_release/actionType/DataType.h"
 
 namespace {
     std::vector<std::shared_ptr<factorlib::IFactor>> g_factors;
+
+    template <typename Fn>
+    void dispatch_to_factors(Fn&& fn) {
+#ifdef FACTORLIB_ENABLE_PARALLEL_INGRESS
+        std::for_each(std::execution::par, g_factors.begin(), g_factors.end(),
+                      [&](const std::shared_ptr<factorlib::IFactor>& f) {
+                          if (f) fn(*f);
+                      });
+#else
+        for (auto& f : g_factors) {
+            if (f) fn(*f);
+        }
+#endif
+    }
 }
 
 namespace factorlib::bridge {
@@ -25,49 +44,47 @@ namespace factorlib::bridge {
     void ingest_snapshot_sh(const std::vector<std_SnapshotStockSH>& v) {
         for (const auto& s : v) {
             auto q = factorlib::DataAdapter::from_snapshot_sh(s);
-            for (auto& f : g_factors) f->on_quote(q);
+            dispatch_to_factors([&](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
 
     void ingest_snapshot_sz(const std::vector<std_SnapshotStockSZ>& v) {
         for (const auto& s : v) {
             auto q = factorlib::DataAdapter::from_snapshot_sz(s);
-            for (auto& f : g_factors) f->on_quote(q);
+            dispatch_to_factors([&](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
 
     void ingest_ont(const std::vector<std_OrdAndExeInfo>& v) {
         for (const auto& x : v) {
             auto tick = factorlib::DataAdapter::to_combined(x);
-            for (auto& f : g_factors) {
-                f->on_tick(tick);
-            }
+            dispatch_to_factors([&](factorlib::IFactor& f){ f.on_tick(tick); });
         }
     }
 
     void ingest_kline(const std::vector<std_BasicandEnhanceKLine>& v) {
         for (const auto& k : v) {
             auto b = factorlib::DataAdapter::from_kline(k);
-            for (auto& f : g_factors) f->on_bar(b);
+            dispatch_to_factors([&](factorlib::IFactor& f){ f.on_bar(b); });
         }
     }
 
     // Overloads for already-converted types (used by tests to avoid dependency on external SDK types)
     void ingest_snapshot_sh(const std::vector<factorlib::QuoteDepth>& v) {
         for (const auto& q : v) {
-            for (auto& f : g_factors) f->on_quote(q);
+            dispatch_to_factors([&](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
 
     void ingest_snapshot_sz(const std::vector<factorlib::QuoteDepth>& v) {
         for (const auto& q : v) {
-            for (auto& f : g_factors) f->on_quote(q);
+            dispatch_to_factors([&](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
 
     void ingest_ont(const std::vector<factorlib::CombinedTick>& v) {
         for (const auto& t : v) {
-            for (auto& f : g_factors) f->on_tick(t);
+            dispatch_to_factors([&](factorlib::IFactor& f){ f.on_tick(t); });
         }
     }
 
