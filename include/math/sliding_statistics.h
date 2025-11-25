@@ -151,7 +151,7 @@ public:
 
         // 2) 检查权重是否合法：必须是有限值且 > 0
         if (!is_finite_numeric(weight) || !(weight > static_cast<W>(0))) {
-            LOG_WARN("WeightedSlidingWindowStats::push: invalid weight {}, drop sample", weight);
+            LOG_DEBUG("WeightedSlidingWindowStats::push: invalid weight {}, drop sample", weight);
             return;
         }
 

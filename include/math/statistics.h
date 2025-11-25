@@ -57,7 +57,7 @@ public:
         }
 
         if (nan_count > 0) {
-            LOG_WARN("Statistics::mean: skipped {} NaN values out of {}", nan_count, data.size());
+            LOG_DEBUG("Statistics::mean: skipped {} NaN values out of {}", nan_count, data.size());
         }
 
         if (valid_count == 0) {
@@ -91,7 +91,7 @@ static double stddev(const Container& data) {
     }
 
     if (nan_count > 0) {
-        LOG_WARN("Statistics::stddev: skipped {} NaN values out of {}", nan_count, data.size());
+        LOG_DEBUG("Statistics::stddev: skipped {} NaN values out of {}", nan_count, data.size());
     }
 
     if (n < 2) {
@@ -123,7 +123,7 @@ static double stddev(const Container& data) {
         }
 
         if (nan_count > 0) {
-            LOG_WARN("Statistics::quantile: skipped {} NaN values out of {}", nan_count, data.size());
+            LOG_DEBUG("Statistics::quantile: skipped {} NaN values out of {}", nan_count, data.size());
         }
 
         if (cleaned.empty()) {
@@ -159,7 +159,7 @@ static double stddev(const Container& data) {
         }
 
         if (is_nan_value(value)) {
-            LOG_WARN("Statistics::median_rank: input value is NaN, return 0.5 by default");
+            LOG_DEBUG("Statistics::median_rank: input value is NaN, return 0.5 by default");
             return 0.5;
         }
 
@@ -176,7 +176,7 @@ static double stddev(const Container& data) {
         }
 
         if (nan_count > 0) {
-            LOG_WARN("Statistics::median_rank: skipped {} NaN values out of {}", nan_count, data.size());
+            LOG_DEBUG("Statistics::median_rank: skipped {} NaN values out of {}", nan_count, data.size());
         }
 
         if (cleaned.empty()) {
@@ -226,7 +226,7 @@ static double correlation(const Container1& x, const Container2& y) {
     }
 
     if (nan_pair_count > 0) {
-        LOG_WARN("Statistics::correlation: skipped {} NaN pairs out of {}", nan_pair_count, x.size());
+        LOG_DEBUG("Statistics::correlation: skipped {} NaN pairs out of {}", nan_pair_count, x.size());
     }
     if (n < 2) {
         return 0.0;
@@ -276,7 +276,7 @@ static double covariance(const Container1& x, const Container2& y) {
     }
 
     if (nan_pair_count > 0) {
-        LOG_WARN("Statistics::covariance: skipped {} NaN pairs out of {}", nan_pair_count, x.size());
+        LOG_DEBUG("Statistics::covariance: skipped {} NaN pairs out of {}", nan_pair_count, x.size());
     }
     if (n < 2) {
         return 0.0;

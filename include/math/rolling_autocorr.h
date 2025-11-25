@@ -27,7 +27,7 @@ public:
     }
 
     bool push(T v){
-        if (!BadValuePolicy::handle(v, "RollingAutoCorr::push")) return true;
+        if (!BadValuePolicy::handle(v, "RollingAutoCorr::push")) return false;
         if (filled_ < W_) {
             buf_[tail_] = v;
             tail_ = (tail_ + 1) % W_;

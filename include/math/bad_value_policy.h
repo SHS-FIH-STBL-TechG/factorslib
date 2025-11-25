@@ -28,7 +28,7 @@ namespace factorlib {
             static bool handle(T& v, const char* where) {
                 if constexpr (std::is_arithmetic_v<T>) {
                     if (!is_finite_numeric(v)) {
-                        LOG_WARN("{}: skip NaN/Inf value {}", where, v);
+                        LOG_DEBUG("{}: skip NaN/Inf value {}", where, v);
                         return false;
                     }
                 }
@@ -43,7 +43,7 @@ namespace factorlib {
             static bool handle(T& v, const char* where) {
                 if constexpr (std::is_arithmetic_v<T>) {
                     if (!is_finite_numeric(v)) {
-                        LOG_WARN("{}: NaN/Inf value {} replaced with 0", where, v);
+                        LOG_DEBUG("{}: NaN/Inf value {} replaced with 0", where, v);
                         v = static_cast<T>(0);
                     }
                 }

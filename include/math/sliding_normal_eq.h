@@ -41,7 +41,7 @@ public:
 
         // 统一检查：x 或 y 中包含 NaN/Inf，则丢弃并记日志
         if (!x.allFinite() || !std::isfinite(static_cast<double>(y))) {
-            LOG_WARN("SlidingNormalEq::push: sample has NaN/Inf, drop");
+            LOG_DEBUG("SlidingNormalEq::push: sample has NaN/Inf, drop");
             return;
         }
 

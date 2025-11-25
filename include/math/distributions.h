@@ -8,13 +8,7 @@
 #include <iterator>
 
 #include "utils/log.h"
-
-#if __has_include(<boost/math/distributions/fisher_f.hpp>)
-  #include <boost/math/distributions/fisher_f.hpp>
-  #define FACTORLIB_HAS_BOOST_MATH 1
-#else
-  #define FACTORLIB_HAS_BOOST_MATH 0
-#endif
+#include <boost/math/distributions/fisher_f.hpp>
 
 namespace factorlib {
 namespace math {
@@ -22,20 +16,23 @@ namespace math {
 /**
  * @brief 概率分布计算模板类
  */
+template<typename TFloat = double>
 class Distributions {
 public:
+    using value_type = TFloat;
+
     /**
      * @brief 正态分布逆CDF（使用Wichura算法近似）
      *        - 若 p 非有限或不在 (0,1) 内，返回 0.0 并给出 warning
      */
-    static double normal_quantile(double p) {
+    static TFloat normal_quantile(TFloat p) {
         if (!std::isfinite(p)) {
-            LOG_WARN("Distributions::normal_quantile: p is NaN/inf ({}) , return 0.0", p);
+            LOG_DEBUG("Distributions::normal_quantile: p is NaN/inf ({}) , return 0.0", p);
             return 0.0;
         }
 
         if (p <= 0.0 || p >= 1.0) {
-            LOG_WARN("Distributions::normal_quantile: p out of range ({}) , return 0.0", p);
+            LOG_DEBUG("Distributions::normal_quantile: p out of range ({}) , return 0.0", p);
             return 0.0;
         }
 
@@ -93,7 +90,7 @@ public:
 
         double zd = static_cast<double>(z);
         if (!std::isfinite(zd)) {
-            LOG_WARN("Distributions::normal_cdf: z is NaN/inf ({}) , return 0.5", zd);
+            LOG_DEBUG("Distributions::normal_cdf: z is NaN/inf ({}) , return 0.5", zd);
             return static_cast<T>(0.5);
         }
 
@@ -111,22 +108,23 @@ public:
      * 概率 probability：
      *  - 若非有限或不在 [0,1] 内，返回 0.0 并打印 warning。
      */
-    template<typename Container>
-    static double empirical_inverse_cdf(const Container& data, double probability) {
+
+template<typename Container>
+    static TFloat empirical_inverse_cdf(const Container& data, TFloat probability) {
         using ValueType = typename Container::value_type;
         static_assert(std::is_arithmetic_v<ValueType>, "Container value type must be arithmetic");
 
         if (data.empty()) {
-            return 0.0;
+            return static_cast<TFloat>(0.0);
         }
 
-        if (!std::isfinite(probability) || probability < 0.0 || probability > 1.0) {
-            LOG_WARN("Distributions::empirical_inverse_cdf: invalid probability {} , return 0.0", probability);
-            return 0.0;
+        if (!std::isfinite(probability) || probability < static_cast<TFloat>(0.0) || probability > static_cast<TFloat>(1.0)) {
+            LOG_DEBUG("Distributions::empirical_inverse_cdf: invalid probability {} , return 0.0", probability);
+            return static_cast<TFloat>(0.0);
         }
 
         // 过滤 NaN，构建清洗后的样本
-        std::vector<double> cleaned;
+        std::vector<TFloat> cleaned;
         cleaned.reserve(data.size());
         std::size_t nan_count = 0;
 
@@ -138,33 +136,33 @@ public:
                     continue;
                 }
             }
-            cleaned.push_back(static_cast<double>(x));
+            cleaned.push_back(static_cast<TFloat>(x));
         }
 
         if (nan_count > 0) {
-            LOG_WARN("Distributions::empirical_inverse_cdf: skipped {} NaN values out of {}",
-                     nan_count, data.size());
+            LOG_DEBUG("Distributions::empirical_inverse_cdf: skipped {} NaN values out of {}",
+                      nan_count, data.size());
         }
 
         if (cleaned.empty()) {
             // 全部为 NaN，退化返回 0.0（与其它统计函数的退化行为保持一致）
-            return 0.0;
+            return static_cast<TFloat>(0.0);
         }
 
         // 创建排序副本
         std::sort(cleaned.begin(), cleaned.end());
 
         // 计算分位数位置
-        const double position = probability * (static_cast<double>(cleaned.size()) - 1.0);
-        const std::size_t index = static_cast<std::size_t>(std::floor(position));
-        const double fraction = position - static_cast<double>(index);
+        const TFloat position = probability * (static_cast<TFloat>(cleaned.size()) - static_cast<TFloat>(1.0));
+        const std::size_t index = static_cast<std::size_t>(std::floor(static_cast<double>(position)));
+        const TFloat fraction = position - static_cast<TFloat>(index);
 
         // 线性插值
         if (index >= cleaned.size() - 1) {
             return cleaned.back();
         } else {
-            const double lower = cleaned[index];
-            const double upper = cleaned[index + 1];
+            const TFloat lower = cleaned[index];
+            const TFloat upper = cleaned[index + 1];
             return lower + fraction * (upper - lower);
         }
     }
@@ -188,14 +186,13 @@ template<typename TFloat>
 inline TFloat fisher_f_sf(TFloat Fobs, int d1, int d2) {
     static_assert(std::is_floating_point_v<TFloat>, "TFloat must be floating point");
 
-#if FACTORLIB_HAS_BOOST_MATH
     if (!std::isfinite(static_cast<double>(Fobs))) {
-        LOG_WARN("Distributions::fisher_f_sf: Fobs is NaN/inf ({}) , return 1", Fobs);
+        LOG_DEBUG("Distributions::fisher_f_sf: Fobs is NaN/inf ({}) , return 1", Fobs);
         return static_cast<TFloat>(1);
     }
     if (!(Fobs >= static_cast<TFloat>(0)) || d1 <= 0 || d2 <= 0) {
-        LOG_WARN("Distributions::fisher_f_sf: invalid args Fobs = {}, d1 = {}, d2 = {} , return 1",
-                 Fobs, d1, d2);
+        LOG_DEBUG("Distributions::fisher_f_sf: invalid args Fobs = {}, d1 = {}, d2 = {} , return 1",
+                  Fobs, d1, d2);
         return static_cast<TFloat>(1);
     }
 
@@ -208,16 +205,11 @@ inline TFloat fisher_f_sf(TFloat Fobs, int d1, int d2) {
         return p;
     } catch (...) {
         // 任何异常（数值/参数）时返回保守值
-        LOG_WARN("Distributions::fisher_f_sf: exception caught in boost::math, return 1");
+        LOG_DEBUG("Distributions::fisher_f_sf: exception caught in boost::math, return 1");
         return static_cast<TFloat>(1);
     }
-#else
-    // 无 Boost：保守退化，返回 1（不显著）
-    (void)Fobs; (void)d1; (void)d2;
-    LOG_WARN("Distributions::fisher_f_sf: Boost.Math not available, return 1");
-    return static_cast<TFloat>(1);
-#endif
 }
+
 
 /**
  * @brief 便捷别名：与 fisher_f_sf 相同（可读性更强）
