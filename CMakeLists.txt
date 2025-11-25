@@ -213,4 +213,8 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     if (FACTORLIB_BUILD_MATH_TESTS)
         add_subdirectory(tests/math_tests)
     endif()
+
+    add_executable(factor_ic_tool
+            tests/factor_ic_tool.cpp
+    )
 endif()
