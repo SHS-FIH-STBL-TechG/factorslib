@@ -82,7 +82,7 @@ WaveletTrendEnergyFactor::CodeState& WaveletTrendEnergyFactor::ensure_state(cons
 
 void WaveletTrendEnergyFactor::on_code_added(const std::string& code) {
     const auto& freqs = get_time_frequencies();
-    for (int freq : freqs) {
+    for (auto freq : freqs) {
         for (int window : _window_sizes) {
             (void)ensure_state(ScopeKey{code, freq, window});
         }

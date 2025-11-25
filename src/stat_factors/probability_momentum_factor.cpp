@@ -94,7 +94,7 @@ ProbabilityMomentumFactor::CodeState& ProbabilityMomentumFactor::ensure_state(co
 void ProbabilityMomentumFactor::on_code_added(const std::string& code) {
     // 预先为每个 (code, freq, window) 初始化 state，可避免运行时首次访问的锁竞争
     const auto& freqs = get_time_frequencies();
-    for (int freq : freqs) {
+    for (auto freq : freqs) {
         for (int window : _window_sizes) {
             (void)ensure_state(ScopeKey{code, freq, window});
         }

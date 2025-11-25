@@ -20,7 +20,7 @@ struct ScopeKey {
     int window{0};
 
     ScopeKey() = default;
-    ScopeKey(std::string c, int f, int w)
+    ScopeKey(std::string c, int64_t f, int w)
         : code(std::move(c)), frequency(f), window(w) {}
 
     /**
