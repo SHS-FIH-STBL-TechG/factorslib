@@ -15,7 +15,6 @@
  * 参数：
  *   - window_size：滑窗长度；
  *   - t          ：MGF 的评估点；
- *   - debug_mode ：是否输出调试日志。
  */
 
 #include <string>

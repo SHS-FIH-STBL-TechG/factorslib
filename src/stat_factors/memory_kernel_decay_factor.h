@@ -14,7 +14,6 @@
  *  - window_size (int)  自相关估计窗口 W
  *  - L           (int)  记忆阶数（最大滞后）
  *  - alpha       (dbl)  分数阶参数 α ∈ (0,1)
- *  - debug_mode  (bool) 调试日志
  *
  * 发布主题：memory_kernel/decay  类型 double。
  */

@@ -60,8 +60,9 @@ namespace factorlib {
         // 针对每个 code 维护各频率的计数器，避免每次事件都重新构造
         std::unordered_map<std::string, std::vector<FrequencyState>> _freq_states;
 
-        static constexpr size_t kMaxWindowOptions = 8;
-        static constexpr size_t kMaxFrequencyOptions = 8;
+        static constexpr size_t K_MAX_WINDOW_OPTIONS = 8;
+        static constexpr size_t K_MAX_FREQUENCY_OPTIONS = 8;
+        static constexpr int    K_MAX_WINDOW_SIZE = 500;
 
         template<typename Fn>
         void for_each_scope(const std::string& code,
@@ -148,11 +149,19 @@ namespace factorlib {
         }
 
         void clamp_window_list(std::vector<int>& windows, const char* label) const {
-            clamp_list_size(windows, kMaxWindowOptions, label);
+            clamp_list_size(windows, K_MAX_WINDOW_OPTIONS, label);
+            for (auto& w : windows) {
+                if (w > K_MAX_WINDOW_SIZE) {
+                    LOG_WARN("{}: 窗口大小 {} 超过上限 {}，自动截断为 {}",
+                             label ? label : "window_sizes", w, K_MAX_WINDOW_SIZE, K_MAX_WINDOW_SIZE);
+                    w = K_MAX_WINDOW_SIZE;
+                }
+                if (w <= 0) w = 1;
+            }
         }
 
         void clamp_frequency_list(std::vector<int64_t>& freqs, const char* label) const {
-            clamp_list_size(freqs, kMaxFrequencyOptions, label);
+            clamp_list_size(freqs, K_MAX_FREQUENCY_OPTIONS, label);
         }
 
         /// @brief 为当前因子设置自定义频率列表（如配置中指定了 time_frequencies）
