@@ -44,5 +44,23 @@
 cmake-build-*/
 .idea/
 
-# vscode files
+# VSCode 配置文件
 .vscode/
+
+# CMake 构建文件
+CMakeCache.txt
+CMakeFiles/
+Makefile
+
+# 操作系统生成的文件
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 临时文件
+*.log
+*.tmp
+*.bak
+
+# 构建输出目录
+build/
