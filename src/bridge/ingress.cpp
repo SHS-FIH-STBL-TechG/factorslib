@@ -1,6 +1,7 @@
 // src/bridge/ingress.cpp
 #include "bridge/ingress.h"
 #include "utils/data_adapter.h"
+#include "utils/trace_helper.h"
 #include "ifactor.h"
 #include "utils/types.h"
 #include "tools/factor_ic_runtime.h"
@@ -108,6 +109,9 @@ namespace factorlib::bridge {
     void ingest_snapshot_sh(const std::vector<std_SnapshotStockSH>& v) {
         for (const auto& s : v) {
             auto q = factorlib::DataAdapter::from_snapshot_sh(s);
+            // 使用时间戳作为唯一 ID 用于追踪
+            uint64_t unique_id = static_cast<uint64_t>(q.timestamp);
+            TRACE_EVENT("ingress", "snapshot_sh", q.code, 0, unique_id);
             dispatch_to_factors([q](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
@@ -115,6 +119,8 @@ namespace factorlib::bridge {
     void ingest_snapshot_sz(const std::vector<std_SnapshotStockSZ>& v) {
         for (const auto& s : v) {
             auto q = factorlib::DataAdapter::from_snapshot_sz(s);
+            uint64_t unique_id = static_cast<uint64_t>(q.timestamp);
+            TRACE_EVENT("ingress", "snapshot_sz", q.code, 0, unique_id);
             dispatch_to_factors([q](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
@@ -122,6 +128,8 @@ namespace factorlib::bridge {
     void ingest_ont(const std::vector<std_OrdAndExeInfo>& v) {
         for (const auto& x : v) {
             auto tick = factorlib::DataAdapter::to_combined(x);
+            uint64_t unique_id = static_cast<uint64_t>(tick.timestamp);
+            TRACE_EVENT("ingress", "ont_tick", tick.code, 0, unique_id);
             dispatch_to_factors([tick](factorlib::IFactor& f){ f.on_tick(tick); });
         }
     }
@@ -133,6 +141,8 @@ namespace factorlib::bridge {
 #endif
         for (const auto& k : v) {
             auto b = factorlib::DataAdapter::from_kline(k);
+            uint64_t unique_id = static_cast<uint64_t>(b.timestamp);
+            TRACE_EVENT("ingress", "kline", b.code, 0, unique_id);
             dispatch_to_factors([b](factorlib::IFactor& f){ f.on_bar(b); });
 #if FACTORLIB_ENABLE_IC_RUNTIME
             converted.push_back(b);
@@ -148,24 +158,32 @@ namespace factorlib::bridge {
     // Overloads for already-converted types (used by tests to avoid dependency on external SDK types)
     void ingest_snapshot_sh(const std::vector<factorlib::QuoteDepth>& v) {
         for (const auto& q : v) {
+            uint64_t unique_id = static_cast<uint64_t>(q.timestamp);
+            TRACE_EVENT("ingress", "snapshot_sh", q.code, 0, unique_id);
             dispatch_to_factors([q](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
 
     void ingest_snapshot_sz(const std::vector<factorlib::QuoteDepth>& v) {
         for (const auto& q : v) {
+            uint64_t unique_id = static_cast<uint64_t>(q.timestamp);
+            TRACE_EVENT("ingress", "snapshot_sz", q.code, 0, unique_id);
             dispatch_to_factors([q](factorlib::IFactor& f){ f.on_quote(q); });
         }
     }
 
     void ingest_ont(const std::vector<factorlib::CombinedTick>& v) {
         for (const auto& t : v) {
+            uint64_t unique_id = static_cast<uint64_t>(t.timestamp);
+            TRACE_EVENT("ingress", "ont_tick", t.code, 0, unique_id);
             dispatch_to_factors([t](factorlib::IFactor& f){ f.on_tick(t); });
         }
     }
 
     void ingest_kline(const std::vector<factorlib::Bar>& v) {
         for (const auto& b : v) {
+            uint64_t unique_id = static_cast<uint64_t>(b.timestamp);
+            TRACE_EVENT("ingress", "kline", b.code, 0, unique_id);
             dispatch_to_factors([b](factorlib::IFactor& f){ f.on_bar(b); });
         }
 #if FACTORLIB_ENABLE_IC_RUNTIME

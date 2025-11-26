@@ -18,6 +18,7 @@ option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
 option(FACTORLIB_ENABLE_IC_RUNTIME "Enable IC evaluation runtime" ON)
+option(FACTORLIB_ENABLE_PERFETTO "Enable Perfetto performance tracing" OFF)
 # 打印所有相关选项
 message(STATUS "========== factorlib CMake options ==========")
 
@@ -30,6 +31,7 @@ foreach(opt
         FACTORLIB_BUILD_MATH_TESTS
         FACTORLIB_ENABLE_PARALLEL_INGRESS
         FACTORLIB_ENABLE_IC_RUNTIME
+        FACTORLIB_ENABLE_PERFETTO
 )
     message(STATUS "  ${opt} = ${${opt}}")
 endforeach()
@@ -134,6 +136,38 @@ else()
     add_definitions(-DFACTORLIB_ENABLE_IC_RUNTIME=0)
 endif()
 
+if (FACTORLIB_ENABLE_PERFETTO)
+    add_definitions(-DFACTORLIB_ENABLE_PERFETTO=1)
+endif()
+
+# ====== Perfetto SDK（如果启用） ======
+if (FACTORLIB_ENABLE_PERFETTO)
+    set(PERFETTO_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/perfetto/sdk)
+    if (EXISTS "${PERFETTO_SDK_DIR}/perfetto.h" AND EXISTS "${PERFETTO_SDK_DIR}/perfetto.cc")
+        message(STATUS "Using Perfetto SDK: ${PERFETTO_SDK_DIR}")
+        # 创建 Perfetto 库
+        add_library(perfetto STATIC ${PERFETTO_SDK_DIR}/perfetto.cc)
+        target_include_directories(perfetto PUBLIC ${PERFETTO_SDK_DIR})
+        target_compile_features(perfetto PUBLIC cxx_std_17)
+
+        # Windows 需要特殊配置
+        if (MSVC)
+            target_compile_options(perfetto PRIVATE /bigobj)
+            target_compile_definitions(perfetto PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX)
+            target_link_libraries(perfetto PUBLIC ws2_32)
+        else()
+            target_link_libraries(perfetto PUBLIC ${CMAKE_THREAD_LIBS_INIT})
+        endif()
+    else()
+        message(WARNING "Perfetto SDK not found at ${PERFETTO_SDK_DIR}")
+        message(WARNING "Please download Perfetto SDK amalgamated files:")
+        message(WARNING "  perfetto.h and perfetto.cc")
+        message(WARNING "from: https://github.com/google/perfetto/releases")
+        message(WARNING "Place them in: third_party/perfetto/sdk/")
+        message(FATAL_ERROR "Cannot enable Perfetto without SDK files")
+    endif()
+endif()
+
 # ========== 组件：工具库（日志 + 通用工具） ==========
 add_library(factorlib_utils
         src/utils/log.cpp
@@ -141,6 +175,7 @@ add_library(factorlib_utils
         src/utils/data_adapter.cpp
         src/utils/trading_time.cpp
         src/utils/nms_bucket_aggregator.cpp
+        src/utils/trace_helper.cpp
         src/tools/factor_ic_runtime.cpp
         include/math/incremental_rank.h
         include/utils/config/feed_mode.h
@@ -157,6 +192,11 @@ if (MSVC)
     target_compile_definitions(factorlib_utils
             INTERFACE _USE_MATH_DEFINES
     )
+endif()
+
+# 链接 Perfetto 库（如果启用）
+if (FACTORLIB_ENABLE_PERFETTO)
+    target_link_libraries(factorlib_utils PUBLIC perfetto)
 endif()
 
 # ---------- 组件：基础因子库（现有因子 + 新因子） ----------
@@ -194,6 +234,7 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/basic_factors_tests/tick_trans_orders_test.cpp
             tests/test_wait.cpp
             tests/utils/databus_test.cpp
+            tests/utils/trace_helper_test.cpp
             tests/factor_compute_test.cpp
             tests/utils/test_config.h
             tests/utils/test_config.cpp

@@ -3,6 +3,7 @@
 #include <cmath>
 #include "../config/runtime_config.h"
 #include "utils/config_utils.h"
+#include "utils/trace_helper.h"
 
 using factorlib::config::RC;
 
@@ -66,8 +67,15 @@ void VolumeMGFFactor::on_volume_event(const std::string& code_raw,
     if (!(volume > 0.0)) {
         return;
     }
+
+    // 为数据入口创建追踪事件（使用时间戳作为唯一 ID）
+    uint64_t unique_id = static_cast<uint64_t>(ts_ms);
+
     ensure_code(code_raw);
     for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
+        // 为每个窗口的计算创建追踪作用域
+        TRACE_SCOPE("factor_compute", "VolumeMGF", code_raw, scope.window, unique_id);
+
         auto& S = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 
@@ -93,6 +101,10 @@ void VolumeMGFFactor::on_volume_event(const std::string& code_raw,
 
     if (!S.window.empty()) {
             compute_and_publish(scoped_code, S, ts_ms);
+
+            // 追踪计数器：记录当前窗口大小
+            TRACE_COUNTER("factor_compute", "window_size", code_raw, scope.window,
+                         static_cast<double>(S.window.size()));
         }
     });
 }

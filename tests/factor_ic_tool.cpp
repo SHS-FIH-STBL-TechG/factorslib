@@ -35,6 +35,7 @@
 #include "utils/databus.h"
 #include "utils/scope_key.h"
 #include "utils/types.h"
+#include "utils/trace_helper.h"
 #include "tools/factor_ic_runtime.h"
 
 namespace factorlib::tools {
@@ -482,11 +483,26 @@ private:
 } // namespace factorlib::tools
 
 int main() {
+    // 初始化 Perfetto 追踪
+    bool trace_enabled = factorlib::trace::TraceHelper::initialize("factor_ic_tool.pftrace");
+    if (trace_enabled) {
+        std::cout << "[追踪] Perfetto 已启用，trace 将保存到: factor_ic_tool.pftrace" << std::endl;
+    }
+
+    int result = 1;
     try {
         factorlib::tools::FactorIcRunner runner;
-        return runner.run();
+        result = runner.run();
     } catch (const std::exception& ex) {
         std::cerr << "[错误] 因子 IC 计算失败: " << ex.what() << std::endl;
-        return 1;
     }
+
+    // 关闭追踪并保存文件
+    if (trace_enabled) {
+        factorlib::trace::TraceHelper::shutdown();
+        std::cout << "[追踪] Trace 已保存到: factor_ic_tool.pftrace" << std::endl;
+        std::cout << "        在 https://ui.perfetto.dev 查看可视化结果" << std::endl;
+    }
+
+    return result;
 }
