@@ -133,7 +133,7 @@ public:
         if (condition_values.size() != mean.size() - 1) {
             throw std::invalid_argument("Condition values dimension must be mean dimension - 1");
         }
-        if (target_index >= static_cast<size_t>(mean.size())) {
+        if (target_index >= mean.size()) {
             throw std::invalid_argument("Target index out of range");
         }
 

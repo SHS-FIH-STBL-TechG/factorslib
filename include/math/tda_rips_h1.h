@@ -54,55 +54,94 @@ inline double dist2(const std::vector<double>& a, const std::vector<double>& b){
     double s=0.0; for (std::size_t i=0;i<a.size();++i){ double d=a[i]-b[i]; s+=d*d; } return s;
 }
 
-// 网格桶稀疏邻接：仅连接同桶与 1-邻桶内半径<=ε 的点
+// 网格桶稀疏邻接：仅连接同桶与 1-邻桶内半径<=ε 的点（简单图：去重）
 inline SparseGraph build_sparse_graph(const std::vector<std::vector<double>>& pts, double eps){
-    const double eps2 = eps*eps;
-    const int D = pts.empty()?0:(int)pts[0].size();
-    double cell = eps; // 以 ε 为网格步长
-    // 建桶
-    struct KeyHash { size_t operator()(const std::vector<long long>& v) const noexcept{
-        size_t h=1469598103934665603ull; for (auto x: v){ h^=std::hash<long long>{}(x); h*=1099511628211ull;} return h; }};
+    const double eps2 = eps * eps;
+    const int D = pts.empty() ? 0 : static_cast<int>(pts[0].size());
+    const double cell = eps; // 以 ε 为网格步长
+
+    // --- 建桶 ---
+    struct KeyHash {
+        std::size_t operator()(const std::vector<long long>& v) const noexcept {
+            std::size_t h = 1469598103934665603ull;
+            for (auto x : v) {
+                h ^= std::hash<long long>{}(x);
+                h *= 1099511628211ull;
+            }
+            return h;
+        }
+    };
     std::unordered_map<std::vector<long long>, std::vector<int>, KeyHash> buckets;
-    for (int i=0;i<(int)pts.size();++i){
+    for (int i = 0; i < static_cast<int>(pts.size()); ++i) {
         std::vector<long long> key(D);
-        for (int d=0; d<D; ++d) key[d]=(long long)std::floor(pts[i][d]/cell);
+        for (int d = 0; d < D; ++d) {
+            key[d] = static_cast<long long>(std::floor(pts[i][d] / cell));
+        }
         buckets[key].push_back(i);
     }
-    // 连接
-    SparseGraph G; G.V = pts.size(); G.adj.assign(G.V, {});
-    auto add_edge=[&](int u,int v){
-        if (u==v) return;
-        if (u>v) std::swap(u,v);
-        G.edges.emplace_back(u,v);
+
+    SparseGraph G;
+    G.V = pts.size();
+    G.adj.assign(G.V, {});
+
+    // --- 边去重：简单图语义 ---
+    std::unordered_set<unsigned long long> edge_set; // (u,v) 组合编码
+    auto encode_edge = [](int u, int v) -> unsigned long long {
+        // u,v 非负且通常远小于 2^32
+        return (static_cast<unsigned long long>(u) << 32)
+             | static_cast<unsigned long long>(static_cast<unsigned int>(v));
+    };
+
+    auto add_edge = [&](int u, int v) {
+        if (u == v) return;
+        if (u > v) std::swap(u, v);
+        const auto code = encode_edge(u, v);
+        if (!edge_set.insert(code).second) {
+            // 已经存在这条无向边，直接跳过
+            return;
+        }
+        G.edges.emplace_back(u, v);
         G.adj[u].push_back(v);
         G.adj[v].push_back(u);
     };
-    // 枚举桶及邻桶（3^D 个邻域）
-    std::vector<long long> dkey(D,0);
-    for (auto& kv : buckets){
+
+    // --- 枚举桶及其 3^D 邻域 ---
+    for (auto& kv : buckets) {
         const auto& key = kv.first;
-        // 生成邻域偏移
+
+        // 生成当前 key 的邻域坐标：key + offset, offset ∈ {-1,0,1}^D
         std::vector<std::vector<long long>> neigh;
-        neigh.push_back(std::vector<long long>(D,0));
-        // D 不大（常见 2/3 维），直接递归生成 offset ∈ {-1,0,1}^D
-        std::function<void(int,std::vector<long long>&)> dfs = [&](int dim, std::vector<long long>& cur){
-            if (dim==D){ neigh.push_back(cur); return; }
-            for (int t=-1;t<=1;++t){ cur[dim]=key[dim]+t; dfs(dim+1,cur); }
+        std::vector<long long> cur(D, 0);
+
+        std::function<void(int)> dfs = [&](int dim) {
+            if (dim == D) {
+                neigh.push_back(cur);
+                return;
+            }
+            for (int t = -1; t <= 1; ++t) {
+                cur[dim] = key[dim] + t;
+                dfs(dim + 1);
+            }
         };
-        std::vector<long long> cur(D,0); dfs(0,cur);
-        // 在当前桶与邻桶内做半径连接
-        for (auto& nk : neigh){
+        dfs(0);  // 这里不会再额外挂一个全零 key
+
+        // 在当前桶与每个邻桶内做半径连接
+        for (const auto& nk : neigh) {
             auto it = buckets.find(nk);
-            if (it==buckets.end()) continue;
+            if (it == buckets.end()) continue;
             const auto& cand = it->second;
-            for (int u : kv.second){
-                for (int v : cand){
-                    if (u>=v) continue;
-                    if (dist2(pts[u],pts[v]) <= eps2) add_edge(u,v);
+
+            for (int u : kv.second) {
+                for (int v : cand) {
+                    if (u >= v) continue; // 保证无向边只考虑 u < v
+                    if (dist2(pts[u], pts[v]) <= eps2) {
+                        add_edge(u, v);
+                    }
                 }
             }
         }
     }
+
     return G;
 }
 

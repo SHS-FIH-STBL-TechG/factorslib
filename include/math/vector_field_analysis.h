@@ -1,66 +1,1 @@
-#pragma once
-/**
- * @file vector_field_analysis.h
- * @brief 2D 网格向量场的散度与旋度估计（有限差分），用于流动性曲面等。
- *
- * 网格规格：Nx × Ny 点；给定 F=(Fx,Fy)，差分步长默认 1。边界使用一阶前/后向差分。
- */
-#include <vector>
-#include <cmath>
-#include <stdexcept>
-
-namespace factorlib {
-namespace math {
-
-struct Grid2DSize { int nx; int ny; };
-
-struct VectorField2D {
-    std::vector<double> Fx; // size = nx*ny
-    std::vector<double> Fy;
-};
-
-inline std::vector<double> divergence(const VectorField2D& F, Grid2DSize g, double hx=1.0, double hy=1.0) {
-    if ((int)F.Fx.size() != g.nx*g.ny || (int)F.Fy.size() != g.nx*g.ny) throw std::invalid_argument("divergence: size mismatch");
-    std::vector<double> div(g.nx*g.ny, 0.0);
-    auto idx = [g](int i, int j){ return i*g.ny + j; };
-    for (int i = 0; i < g.nx; ++i) {
-        for (int j = 0; j < g.ny; ++j) {
-            // dFx/dx
-            double dFx_dx = 0.0;
-            if (i == 0) dFx_dx = (F.Fx[idx(i+1,j)] - F.Fx[idx(i,j)]) / hx;
-            else if (i == g.nx-1) dFx_dx = (F.Fx[idx(i,j)] - F.Fx[idx(i-1,j)]) / hx;
-            else dFx_dx = (F.Fx[idx(i+1,j)] - F.Fx[idx(i-1,j)]) / (2*hx);
-            // dFy/dy
-            double dFy_dy = 0.0;
-            if (j == 0) dFy_dy = (F.Fy[idx(i,j+1)] - F.Fy[idx(i,j)]) / hy;
-            else if (j == g.ny-1) dFy_dy = (F.Fy[idx(i,j)] - F.Fy[idx(i,j-1)]) / hy;
-            else dFy_dy = (F.Fy[idx(i,j+1)] - F.Fy[idx(i,j-1)]) / (2*hy);
-            div[idx(i,j)] = dFx_dx + dFy_dy;
-        }
-    }
-    return div;
-}
-
-inline std::vector<double> curl_z(const VectorField2D& F, Grid2DSize g, double hx=1.0, double hy=1.0) {
-    if ((int)F.Fx.size() != g.nx*g.ny || (int)F.Fy.size() != g.nx*g.ny) throw std::invalid_argument("curl: size mismatch");
-    std::vector<double> cz(g.nx*g.ny, 0.0);
-    auto idx = [g](int i, int j){ return i*g.ny + j; };
-    for (int i = 0; i < g.nx; ++i) {
-        for (int j = 0; j < g.ny; ++j) {
-            double dFy_dx = 0.0;
-            if (i == 0) dFy_dx = (F.Fy[idx(i+1,j)] - F.Fy[idx(i,j)]) / hx;
-            else if (i == g.nx-1) dFy_dx = (F.Fy[idx(i,j)] - F.Fy[idx(i-1,j)]) / hx;
-            else dFy_dx = (F.Fy[idx(i+1,j)] - F.Fy[idx(i-1,j)]) / (2*hx);
-
-            double dFx_dy = 0.0;
-            if (j == 0) dFx_dy = (F.Fx[idx(i,j+1)] - F.Fx[idx(i,j)]) / hy;
-            else if (j == g.ny-1) dFx_dy = (F.Fx[idx(i,j)] - F.Fx[idx(i,j-1)]) / hy;
-            else dFx_dy = (F.Fx[idx(i,j+1)] - F.Fx[idx(i,j-1)]) / (2*hy);
-
-            cz[idx(i,j)] = dFy_dx - dFx_dy;
-        }
-    }
-    return cz;
-}
-
-}} // namespace factorlib::math
+#pragma once/** * @file vector_field_analysis.h * @brief 2D 网格向量场的散度与旋度估计（有限差分），用于流动性曲面等。 * * 网格规格：Nx × Ny 点；给定 F=(Fx,Fy)，差分步长默认 1。边界使用一阶前/后向差分。 */#include <vector>#include <cmath>#include <stdexcept>namespace factorlib {namespace math {struct Grid2DSize { int nx; int ny; };struct VectorField2D {    std::vector<double> Fx; // size = nx*ny    std::vector<double> Fy;};inline std::vector<double> divergence(const VectorField2D& F, Grid2DSize g, double hx=1.0, double hy=1.0) {    if ((int)F.Fx.size() != g.nx*g.ny || (int)F.Fy.size() != g.nx*g.ny)        throw std::invalid_argument("divergence: size mismatch");    if (g.nx <= 0 || g.ny <= 0)        throw std::invalid_argument("divergence: invalid grid size");    std::vector<double> div(g.nx*g.ny, 0.0);    auto idx = [g](int i, int j){ return i*g.ny + j; };    const bool single_x = (g.nx == 1);    const bool single_y = (g.ny == 1);    for (int i = 0; i < g.nx; ++i) {        for (int j = 0; j < g.ny; ++j) {            double dFx_dx = 0.0;            if (!single_x) {                if (i == 0)                    dFx_dx = (F.Fx[idx(i+1,j)] - F.Fx[idx(i,j)]) / hx;                else if (i == g.nx-1)                    dFx_dx = (F.Fx[idx(i,j)] - F.Fx[idx(i-1,j)]) / hx;                else                    dFx_dx = (F.Fx[idx(i+1,j)] - F.Fx[idx(i-1,j)]) / (2*hx);            }            double dFy_dy = 0.0;            if (!single_y) {                if (j == 0)                    dFy_dy = (F.Fy[idx(i,j+1)] - F.Fy[idx(i,j)]) / hy;                else if (j == g.ny-1)                    dFy_dy = (F.Fy[idx(i,j)] - F.Fy[idx(i,j-1)]) / hy;                else                    dFy_dy = (F.Fy[idx(i,j+1)] - F.Fy[idx(i,j-1)]) / (2*hy);            }            div[idx(i,j)] = dFx_dx + dFy_dy;        }    }    return div;}inline std::vector<double> curl_z(const VectorField2D& F, Grid2DSize g, double hx=1.0, double hy=1.0) {    if ((int)F.Fx.size() != g.nx*g.ny || (int)F.Fy.size() != g.nx*g.ny)        throw std::invalid_argument("curl: size mismatch");    if (g.nx <= 0 || g.ny <= 0)        throw std::invalid_argument("curl: invalid grid size");    std::vector<double> cz(g.nx*g.ny, 0.0);    auto idx = [g](int i, int j){ return i*g.ny + j; };    const bool single_x = (g.nx == 1);    const bool single_y = (g.ny == 1);    for (int i = 0; i < g.nx; ++i) {        for (int j = 0; j < g.ny; ++j) {            double dFy_dx = 0.0;            if (!single_x) {                if (i == 0)                    dFy_dx = (F.Fy[idx(i+1,j)] - F.Fy[idx(i,j)]) / hx;                else if (i == g.nx-1)                    dFy_dx = (F.Fy[idx(i,j)] - F.Fy[idx(i-1,j)]) / hx;                else                    dFy_dx = (F.Fy[idx(i+1,j)] - F.Fy[idx(i-1,j)]) / (2*hx);            }            double dFx_dy = 0.0;            if (!single_y) {                if (j == 0)                    dFx_dy = (F.Fx[idx(i,j+1)] - F.Fx[idx(i,j)]) / hy;                else if (j == g.ny-1)                    dFx_dy = (F.Fx[idx(i,j)] - F.Fx[idx(i,j-1)]) / hy;                else                    dFx_dy = (F.Fx[idx(i,j+1)] - F.Fx[idx(i,j-1)]) / (2*hy);            }            cz[idx(i,j)] = dFy_dx - dFx_dy;        }    }    return cz;}}} // namespace factorlib::math

@@ -2,6 +2,7 @@
 #include "math/modwt.h"
 #include <vector>
 #include <cmath>
+#include <random>
 
 using namespace factorlib::math;
 
@@ -14,14 +15,32 @@ protected:
     WaveletFilter wf_;
 };
 
-// 测试1: 构造函数参数验证
+// 辅助函数：生成白噪声序列
+std::vector<double> generate_white_noise(double mean, double stddev, size_t length, unsigned seed = 42) {
+    std::vector<double> sequence(length);
+    std::default_random_engine generator(seed);
+    std::normal_distribution<double> distribution(mean, stddev);
+
+    for (size_t i = 0; i < length; ++i) {
+        sequence[i] = distribution(generator);
+    }
+    return sequence;
+}
+
+/**
+ * @brief 测试构造函数参数验证
+ * @brief 验证构造函数对非法参数的检查，确保窗口大小和分解层数的有效性
+ */
 TEST_F(RollingMODWTTest, ConstructorValidation) {
     EXPECT_NO_THROW(RollingMODWT<float>(100, 3, wf_));
     EXPECT_THROW(RollingMODWT<float>(1, 3, wf_), std::invalid_argument);
     EXPECT_THROW(RollingMODWT<float>(100, 0, wf_), std::invalid_argument);
 }
 
-// 测试2: 基本功能 - 窗口未满时的行为
+/**
+ * @brief 测试窗口未满时的行为
+ * @brief 验证在窗口数据不足时，估计器返回未就绪状态和NaN值
+ */
 TEST_F(RollingMODWTTest, PartialWindowBehavior) {
     RollingMODWT<double> modwt(10, 2, wf_);
 
@@ -36,7 +55,10 @@ TEST_F(RollingMODWTTest, PartialWindowBehavior) {
     EXPECT_TRUE(std::isnan(modwt.trend_energy_ratio(1)));
 }
 
-// 测试3: 常数序列测试 - 修正期望值
+/**
+ * @brief 测试常数序列的能量分布
+ * @brief 验证对于常数序列，趋势能量占比接近1（几乎全部能量在低频趋势部分）
+ */
 TEST_F(RollingMODWTTest, ConstantSeries) {
     const int W = 32;
     const int J = 3;
@@ -57,7 +79,10 @@ TEST_F(RollingMODWTTest, ConstantSeries) {
     EXPECT_LE(ratio, 1.0 + 1e-10);
 }
 
-// 测试4: 高频噪声序列 - 修正测试逻辑
+/**
+ * @brief 测试高频噪声序列的能量分布
+ * @brief 验证对于高频噪声序列，趋势能量占比较小（大部分能量在高频细节部分）
+ */
 TEST_F(RollingMODWTTest, HighFrequencyNoise) {
     const int W = 64;
     const int J = 4;
@@ -91,7 +116,10 @@ TEST_F(RollingMODWTTest, HighFrequencyNoise) {
     EXPECT_LT(ratio_j3, 0.5); // 趋势能量占比应该小于50%
 }
 
-// 测试5: 滑动窗口更新测试 - 完全重写
+/**
+ * @brief 测试滑动窗口更新功能
+ * @brief 验证在窗口滑动过程中，能量占比能够正确反映信号频率成分的变化
+ */
 TEST_F(RollingMODWTTest, SlidingWindowUpdate) {
     const int W = 32;  // 增大窗口以获得更好的频率分辨率
     const int J = 3;
@@ -144,14 +172,15 @@ TEST_F(RollingMODWTTest, SlidingWindowUpdate) {
     }
     avg_high /= avg_count;
 
-    std::cout << "Low freq avg ratio: " << avg_low << ", High freq avg ratio: " << avg_high << std::endl;
-
     // 低频信号应该有更高的趋势能量占比
     // 由于数值计算的不确定性，我们设置一个合理的期望
     EXPECT_GT(avg_low, avg_high - 0.3);  // 允许一定的误差范围
 }
 
-// 备选测试：使用更明显的信号差异
+/**
+ * @brief 测试滑动窗口更新 - 备选方案
+ * @brief 使用更明显的信号差异（线性趋势 vs 随机噪声）来验证能量占比变化
+ */
 TEST_F(RollingMODWTTest, SlidingWindowUpdateAlternative) {
     const int W = 48;
     const int J = 4;
@@ -203,48 +232,15 @@ TEST_F(RollingMODWTTest, SlidingWindowUpdateAlternative) {
         double avg_phase1 = sum_phase1 / count_phase1;
         double avg_phase2 = sum_phase2 / count_phase2;
 
-        std::cout << "Phase1 (trend) avg: " << avg_phase1
-                  << ", Phase2 (noise) avg: " << avg_phase2 << std::endl;
-
         // 趋势阶段应该比噪声阶段有更高的趋势能量占比
         EXPECT_GT(avg_phase1, avg_phase2);
     }
 }
 
-// 调试测试：检查具体数值
-TEST_F(RollingMODWTTest, DebugEnergyCalculation) {
-    const int W = 16;
-    const int J = 2;
-    RollingMODWT<double> modwt(W, J, wf_);
-
-    std::cout << "Testing energy calculation..." << std::endl;
-
-    // 测试常数序列
-    for (int i = 0; i < W; ++i) {
-        modwt.push(1.0);
-    }
-
-    double ratio_const = modwt.trend_energy_ratio(1);
-    std::cout << "Constant series ratio: " << ratio_const << std::endl;
-
-    // 测试高频序列
-    RollingMODWT<double> modwt2(W, J, wf_);
-    for (int i = 0; i < W; ++i) {
-        double val = std::sin(8.0 * M_PI * i / W);
-        modwt2.push(val);
-    }
-
-    double ratio_high = modwt2.trend_energy_ratio(1);
-    std::cout << "High freq series ratio: " << ratio_high << std::endl;
-
-    // 测试不同j_trend参数
-    for (int j = 1; j <= J; ++j) {
-        double ratio = modwt2.trend_energy_ratio(j);
-        std::cout << "j_trend=" << j << ": " << ratio << std::endl;
-    }
-}
-
-// 测试6: 边界参数测试
+/**
+ * @brief 测试边界参数处理
+ * @brief 验证对j_trend参数的边界值处理，包括自动截断功能
+ */
 TEST_F(RollingMODWTTest, BoundaryParameters) {
     const int W = 16;
     const int J = 3;
@@ -271,7 +267,10 @@ TEST_F(RollingMODWTTest, BoundaryParameters) {
     EXPECT_DOUBLE_EQ(ratio5, ratio2);
 }
 
-// 测试7: 数值稳定性测试
+/**
+ * @brief 测试数值稳定性
+ * @brief 验证在极端数值情况下的稳定性，如全零序列
+ */
 TEST_F(RollingMODWTTest, NumericalStability) {
     const int W = 24;
     const int J = 2;
@@ -286,7 +285,10 @@ TEST_F(RollingMODWTTest, NumericalStability) {
     EXPECT_TRUE(std::isnan(modwt.trend_energy_ratio(1)));
 }
 
-// 测试8: 不同小波基测试
+/**
+ * @brief 测试不同小波基的影响
+ * @brief 验证不同小波滤波器（db4 vs sym4）对能量占比计算的影响
+ */
 TEST_F(RollingMODWTTest, DifferentWavelets) {
     const int W = 32;
     const int J = 3;
@@ -315,18 +317,21 @@ TEST_F(RollingMODWTTest, DifferentWavelets) {
     EXPECT_LE(ratio_sym4, 1.0);
 }
 
-// 测试5: 滑动窗口更新测试 - 验证“趋势能量”（低频）随时间的变化
+/**
+ * @brief 测试滑动窗口更新 - 验证趋势能量随时间变化
+ * @brief 使用更明确的低频/高频信号对比，验证趋势能量占比的区分能力
+ */
 TEST_F(RollingMODWTTest, SlidingWindowUpdate002) {
     const int W = 20;
     const int J = 2;
     RollingMODWT<double> modwt(W, J, wf_);
 
-    // 这里我们把“趋势”理解为较低频的尺度：
+    // 这里我们把"趋势"理解为较低频的尺度：
     //   j_trend = 2 -> 只累加第 2 层（更低频）及以上的能量
     //   对低频信号：E2 占比大 -> ratio(2) 较大
     //   对高频信号：E1 占比大 -> ratio(2) 较小
     auto calc_trend_ratio = [&modwt]() -> double {
-        return modwt.trend_energy_ratio(2);  // 只统计“低频趋势”能量占比
+        return modwt.trend_energy_ratio(2);  // 只统计"低频趋势"能量占比
     };
 
     // 第一阶段：低频信号
@@ -361,7 +366,7 @@ TEST_F(RollingMODWTTest, SlidingWindowUpdate002) {
     ASSERT_FALSE(ratios_low.empty());
     ASSERT_FALSE(ratios_high.empty());
 
-    // 计算两段的平均“趋势能量占比”
+    // 计算两段的平均"趋势能量占比"
     auto avg = [](const std::vector<double>& v) {
         double sum = 0.0;
         int cnt = 0;
@@ -384,6 +389,126 @@ TEST_F(RollingMODWTTest, SlidingWindowUpdate002) {
     EXPECT_GE(avg_high, 0.0);
     EXPECT_LE(avg_high, 1.0);
 
-    // 关键断言：低频阶段的“趋势能量占比”应该显著高于高频阶段
+    // 关键断言：低频阶段的"趋势能量占比"应该显著高于高频阶段
     EXPECT_GT(avg_low, avg_high);
+}
+
+/**
+ * @brief 测试无检查坏值处理策略
+ * @brief 验证NoCheckBadValuePolicy不检查坏值，允许NaN/Inf传播
+ */
+TEST_F(RollingMODWTTest, NoCheckBadValuePolicy) {
+    const int W = 16;
+    const int J = 2;
+
+    RollingMODWT<double, NoCheckBadValuePolicy> modwt(W, J, wf_);
+
+    // 包含坏值的序列
+    std::vector<double> bad_sequence = {
+        1.0, 2.0, std::numeric_limits<double>::quiet_NaN(),
+        3.0, std::numeric_limits<double>::infinity(), 4.0
+    };
+
+    // NoCheck策略应该总是接受值，包括坏值
+    for (double value : bad_sequence) {
+        EXPECT_TRUE(modwt.push(value));
+    }
+
+    // 填充窗口
+    auto additional_data = generate_white_noise(0.0, 1.0, W - bad_sequence.size());
+    for (double value : additional_data) {
+        modwt.push(value);
+    }
+
+    // 由于包含坏值，结果可能是NaN或有效值，但不应该崩溃
+    if (modwt.ready()) {
+        double result = modwt.trend_energy_ratio(1);
+        // 结果可能是有效值或NaN，测试应该能够处理这两种情况
+        if (!std::isnan(result)) {
+            EXPECT_GE(result, 0.0);
+            EXPECT_LE(result, 1.0);
+        }
+    }
+}
+
+/**
+ * @brief 测试跳过坏值处理策略
+ * @brief 验证SkipNaNInfPolicy会拒绝坏值（返回false）
+ */
+TEST_F(RollingMODWTTest, SkipBadValuePolicy) {
+    const int W = 16;
+    const int J = 2;
+
+    RollingMODWT<double, SkipNaNInfPolicy> modwt(W, J, wf_);
+
+    // 混合序列：包含正常值和坏值
+    std::vector<double> mixed_sequence = {
+        1.0, 2.0, 3.0,  // 正常值
+        std::numeric_limits<double>::quiet_NaN(),  // NaN
+        4.0, 5.0,        // 正常值
+        std::numeric_limits<double>::infinity(),   // Inf
+        6.0              // 正常值
+    };
+
+    for (double value : mixed_sequence) {
+        bool accepted = modwt.push(value);
+        // NaN和Inf应该被拒绝（返回false），正常值应该被接受（返回true）
+        if (std::isnan(value) || std::isinf(value)) {
+            EXPECT_FALSE(accepted) << "Bad value should be rejected by SkipNaNInfPolicy";
+        } else {
+            EXPECT_TRUE(accepted) << "Normal value should be accepted";
+        }
+    }
+
+    // 填充足够的好数据以确保能计算出有效结果
+    auto additional_data = generate_white_noise(0.0, 1.0, W + 10);
+    for (double value : additional_data) {
+        modwt.push(value);
+    }
+
+    // 应该能计算出有效的记忆核值（坏值被跳过）
+    if (modwt.ready()) {
+        double result = modwt.trend_energy_ratio(1);
+        EXPECT_FALSE(std::isnan(result));
+        EXPECT_GE(result, 0.0);
+        EXPECT_LE(result, 1.0);
+    }
+}
+
+/**
+ * @brief 测试零替换坏值处理策略
+ * @brief 验证ZeroNaNInfPolicy会将坏值替换为零，并总是返回true
+ */
+TEST_F(RollingMODWTTest, ZeroReplaceBadValuePolicy) {
+    const int W = 16;
+    const int J = 2;
+
+    RollingMODWT<double, ZeroNaNInfPolicy> modwt(W, J, wf_);
+
+    // 包含坏值的序列
+    std::vector<double> bad_sequence = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(),
+        1.0, 2.0, 3.0
+    };
+
+    for (double value : bad_sequence) {
+        bool accepted = modwt.push(value);
+        // ZeroNaNInfPolicy应该总是返回true（接受所有值，但替换坏值为0）
+        EXPECT_TRUE(accepted) << "ZeroNaNInfPolicy should always accept values";
+    }
+
+    // 填充足够数据后应该能计算出结果
+    auto additional_data = generate_white_noise(0.0, 1.0, W - bad_sequence.size());
+    for (double value : additional_data) {
+        modwt.push(value);
+    }
+
+    if (modwt.ready()) {
+        double result = modwt.trend_energy_ratio(1);
+        EXPECT_FALSE(std::isnan(result));
+        EXPECT_GE(result, 0.0);
+        EXPECT_LE(result, 1.0);
+    }
 }

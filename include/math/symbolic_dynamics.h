@@ -1,6 +1,6 @@
 #pragma once
 /**
- * @file include/math/symbolic_dynamics.h
+ * @file symbolic_dynamics.h
  * @brief 符号化与一阶马尔可夫转移矩阵的滑窗增量实现；
  *        支持：转移矩阵、稳态分布、熵产生率（近似）与拓扑熵（基于邻接谱半径近似）。
  */
@@ -53,40 +53,61 @@ public:
     }
 
     bool push(T x) {
+        // 1) 坏值处理（NaN / Inf 等）
         if constexpr (std::is_floating_point_v<T>) {
             if (!is_finite_numeric(x)) {
                 if (!BadPolicy::handle(x, "RollingSymbolicDynamics::push")) {
-                    return false;
+                    return false; // 策略要求丢弃该样本
                 }
             }
         }
+
         int s = sym_.symbol_of(x);
-        if (size_ < W_) {
-            // 预热
-            buf_[tail_] = x;
+
+        // 空窗口：只存符号，不产生转移
+        if (size_ == 0) {
+            buf_[tail_]    = x;
             symbuf_[tail_] = s;
-            if (size_ >= 1) {
-                int s_prev = symbuf_[(tail_ + W_ - 1) % W_];
-                add_transition(s_prev, s);
-            }
+            tail_ = (tail_ + 1) % W_;
+            size_ = 1;
+            return true;
+        }
+
+        // 窗口未满：追加在队尾，并加一条“前一个 → 当前”的转移
+        if (size_ < W_) {
+            std::size_t last_idx = (tail_ + W_ - 1) % W_;
+            int s_prev = symbuf_[last_idx];
+            add_transition(s_prev, s);
+
+            buf_[tail_]    = x;
+            symbuf_[tail_] = s;
             tail_ = (tail_ + 1) % W_;
             ++size_;
             return true;
         }
 
-        // 删除最老的一个符号以及它与下一个的转移
-        int s_old = symbuf_[head_];
-        int s_old_next = symbuf_[(head_ + 1) % W_];
-        remove_transition(s_old, s_old_next);
+        // 窗口已满：需要滑窗
+        // 当前窗口：从 head_ 开始的 size_=W_ 个元素
+        // 1) 移除最老转移：(s_old0 -> s_old1)
+        int s_old0 = symbuf_[head_];
+        int s_old1 = symbuf_[(head_ + 1) % W_];
+        remove_transition(s_old0, s_old1);
 
-        // 写入新符号并添加与末尾的转移
-        buf_[head_] = x;
-        symbuf_[head_] = s;
-        head_ = (head_ + 1) % W_;
-        int s_prev = symbuf_[(head_ + W_ - 1) % W_];
-        add_transition(s_prev, s);
+        // 2) 追加新符号前，先记录旧窗口的“最后一个符号”
+        std::size_t last_idx = (tail_ + W_ - 1) % W_;
+        int s_prev = symbuf_[last_idx];
+
+        // 3) 在队尾位置写入新符号，并维护队列指针
+        buf_[tail_]    = x;
+        symbuf_[tail_] = s;
 
         tail_ = (tail_ + 1) % W_;
+        head_ = (head_ + 1) % W_; // 逻辑上丢弃最老的一个
+        // size_ 维持为 W_（删一个加一个）
+
+        // 4) 增加一条新转移：(旧的最后一个符号 -> 新符号)
+        add_transition(s_prev, s);
+
         return true;
     }
 
@@ -134,12 +155,6 @@ public:
             sigma += pi[i] * P[i][j] * std::log(P[i][j] / P[j][i]);
         }
         return static_cast<double>(sigma);
-    }
-
-    /// 转移矩阵的主特征值（谱半径）近似
-    double leading_eigenvalue() const {
-        auto P = transition_matrix();
-        return power_method_dominant_eig(P, 32);
     }
 
 private:
