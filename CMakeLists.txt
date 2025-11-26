@@ -9,6 +9,31 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ========================
+# 路径重定位：third_party / RollWinOp 必须位于仓库外部
+# ========================
+set(FACTORLIB_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
+if (NOT EXISTS "${FACTORLIB_THIRD_PARTY_DIR}")
+    message(FATAL_ERROR "third_party directory not found at ${FACTORLIB_THIRD_PARTY_DIR}.
+    请先将 third_party 整个目录移动到仓库外的 ../third_party。")
+endif()
+message(STATUS "Using third_party directory: ${FACTORLIB_THIRD_PARTY_DIR}")
+
+set(ROLLWINOP_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../RollWinOp)
+if (NOT EXISTS "${ROLLWINOP_ROOT}/include/math")
+    message(FATAL_ERROR "RollWinOp math headers not found at ${ROLLWINOP_ROOT}/include/math.
+    请先将 include/math 目录整体移动到 ../RollWinOp/include/math。")
+endif()
+set(FACTORLIB_ROLLWINOP_INCLUDE_DIR ${ROLLWINOP_ROOT}/include)
+set(FACTORLIB_MATH_HEADER_DIR ${ROLLWINOP_ROOT}/include/math)
+set(FACTORLIB_MATH_TESTS_SOURCE_DIR ${ROLLWINOP_ROOT}/tests/math_tests)
+message(STATUS "Using external RollWinOp includes: ${FACTORLIB_ROLLWINOP_INCLUDE_DIR}")
+
+# 继承 RollWinOp 的 INTERFACE 目标（仅使用头文件，不编译其测试）
+set(ROLLWINOP_BUILD_TESTS OFF CACHE BOOL "Disable RollWinOp tests when embedded" FORCE)
+set(ROLLWINOP_ENABLE_TRACE_DEBUG ${FACTORLIB_ENABLE_TRACE_DEBUG} CACHE BOOL "" FORCE)
+add_subdirectory(${ROLLWINOP_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/RollWinOp)
+
+# ========================
 # 选项
 # ========================
 option(FACTORLIB_BUILD_TESTS "Build tests" ON)
@@ -44,7 +69,11 @@ message(STATUS "============================================")
 if (MSVC)
     add_compile_options(/utf-8)  # Ensure source is treated as UTF-8 on MSVC
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-    add_compile_options(/Zc:__cplusplus)  # 让 __cplusplus 正确报告 C++17
+    add_compile_options(
+            /Zc:__cplusplus       # 让 __cplusplus 正确报告 C++17
+            /d2ReducedOptimizeHugeFunctions  # 避免 MSVC 在巨型模板上触发 C1001
+            /d2SSAOptimizer-      # 关闭 SSA 优化，缓解编译器 BUG
+    )
 else()
     add_compile_options(-Wall -Wextra -O2)
 endif()
@@ -61,53 +90,62 @@ endif()
 # ========================
 # googletest：需要把官方源码放到 third_party/googletest/googletest/{include,src}
 if (FACTORLIB_BUILD_TESTS)
-    add_subdirectory(third_party/googletest)
+    set(FACTORLIB_GTEST_SOURCE_DIR ${FACTORLIB_THIRD_PARTY_DIR}/googletest)
+    if (EXISTS "${FACTORLIB_GTEST_SOURCE_DIR}/CMakeLists.txt")
+        add_subdirectory(${FACTORLIB_GTEST_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/third_party/googletest)
+    else()
+        message(FATAL_ERROR "googletest not found at ${FACTORLIB_GTEST_SOURCE_DIR}")
+    endif()
 endif()
 
 # ---------- 第三方：Eigen ----------
 if (FACTORLIB_USE_THIRD_PARTY)
-    set(EIGEN3_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/eigen)
+    set(EIGEN3_INCLUDE_DIR ${FACTORLIB_THIRD_PARTY_DIR}/eigen)
     if (EXISTS "${EIGEN3_INCLUDE_DIR}/Eigen/Core")
         message(STATUS "Using bundled Eigen: ${EIGEN3_INCLUDE_DIR}")
         # 全局 Eigen 头文件
         include_directories(${EIGEN3_INCLUDE_DIR})
     else()
         message(WARNING "Eigen headers NOT found at ${EIGEN3_INCLUDE_DIR}")
-        message(WARNING "Please download Eigen to third_party/eigen/")
+        message(WARNING "Please download Eigen to ${FACTORLIB_THIRD_PARTY_DIR}/eigen/")
         message(WARNING "Download from: https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz")
     endif()
 endif()
 
 # ---------- 工程内公共头路径（全局可用） ----------
-include_directories(
+set(FACTORLIB_PUBLIC_INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+if (DEFINED FACTORLIB_ROLLWINOP_INCLUDE_DIR)
+    list(APPEND FACTORLIB_PUBLIC_INCLUDE_DIRS ${FACTORLIB_ROLLWINOP_INCLUDE_DIR})
+endif()
+include_directories(${FACTORLIB_PUBLIC_INCLUDE_DIRS})
 
 # ====== Boost（使用 bcp 导出的最小头，避免 FindBoost / CMP0167） ======
-set(BOOST_VENDOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/boost)
+set(BOOST_VENDOR_DIR ${FACTORLIB_THIRD_PARTY_DIR}/boost)
 if (EXISTS "${BOOST_VENDOR_DIR}/boost/config.hpp")
     message(STATUS "Using bundled Boost headers (bcp): ${BOOST_VENDOR_DIR}")
     # 全局 Boost 头文件
     include_directories(${BOOST_VENDOR_DIR})
 else()
     message(FATAL_ERROR "Bundled Boost headers not found at ${BOOST_VENDOR_DIR}.
-    请先用 bcp 导出到 factors_lib/third_party/boost，再重新配置。")
+    请先用 bcp 导出到 ${FACTORLIB_THIRD_PARTY_DIR}/boost，再重新配置。")
 endif()
 
 # ---------- nanoflann ----------
-set(NANOFLANN_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanoflann)
+set(NANOFLANN_INCLUDE_DIR ${FACTORLIB_THIRD_PARTY_DIR}/nanoflann)
 if (EXISTS "${NANOFLANN_INCLUDE_DIR}/nanoflann.hpp")
     message(STATUS "Using bundled nanoflann: ${NANOFLANN_INCLUDE_DIR}")
     # 全局 nanoflann 头文件
     include_directories(${NANOFLANN_INCLUDE_DIR})
 else()
     message(FATAL_ERROR "nanoflann.hpp not found at ${NANOFLANN_INCLUDE_DIR}.
-    请把 nanoflann.hpp 放到 factorlib/third_party/nanoflann 目录下。")
+    请把 nanoflann.hpp 放到 ${FACTORLIB_THIRD_PARTY_DIR}/nanoflann 目录下。")
 endif()
 
 # ---------- spdlog：始终使用 third_party/spdlog ----------
-set(SPDLOG_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog/include)
+set(SPDLOG_INCLUDE_DIR ${FACTORLIB_THIRD_PARTY_DIR}/spdlog/include)
 message(STATUS "Using spdlog headers: ${SPDLOG_INCLUDE_DIR}")
 # 全局 spdlog 头文件
 include_directories(${SPDLOG_INCLUDE_DIR})
@@ -117,12 +155,16 @@ if (FACTORLIB_ENABLE_TRACE_DEBUG)
     add_definitions(
             -DUSE_SPDLOG=1
             -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_DEBUG
+            -DFMT_USE_CONSTEXPR=0
+            -DFMT_USE_CONSTEXPR_STRING=0
     )
 else()
     add_definitions(
             -DUSE_SPDLOG=1
             -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_INFO
             -DFACTORLIB_NO_DEBUG_TRACE=1
+            -DFMT_USE_CONSTEXPR=0
+            -DFMT_USE_CONSTEXPR_STRING=0
     )
 endif()
 
@@ -142,7 +184,7 @@ endif()
 
 # ====== Perfetto SDK（如果启用） ======
 if (FACTORLIB_ENABLE_PERFETTO)
-    set(PERFETTO_SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/perfetto/sdk)
+    set(PERFETTO_SDK_DIR ${FACTORLIB_THIRD_PARTY_DIR}/perfetto/sdk)
     if (EXISTS "${PERFETTO_SDK_DIR}/perfetto.h" AND EXISTS "${PERFETTO_SDK_DIR}/perfetto.cc")
         message(STATUS "Using Perfetto SDK: ${PERFETTO_SDK_DIR}")
         # 创建 Perfetto 库
@@ -163,10 +205,18 @@ if (FACTORLIB_ENABLE_PERFETTO)
         message(WARNING "Please download Perfetto SDK amalgamated files:")
         message(WARNING "  perfetto.h and perfetto.cc")
         message(WARNING "from: https://github.com/google/perfetto/releases")
-        message(WARNING "Place them in: third_party/perfetto/sdk/")
+        message(WARNING "Place them in: ${FACTORLIB_THIRD_PARTY_DIR}/perfetto/sdk/")
         message(FATAL_ERROR "Cannot enable Perfetto without SDK files")
     endif()
 endif()
+
+set(FACTORLIB_INTERFACE_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if (DEFINED FACTORLIB_ROLLWINOP_INCLUDE_DIR)
+    list(APPEND FACTORLIB_INTERFACE_INCLUDE_DIRS ${FACTORLIB_ROLLWINOP_INCLUDE_DIR})
+endif()
+
+set(FACTORLIB_MATH_INCREMENTAL_RANK_HEADER ${FACTORLIB_MATH_HEADER_DIR}/incremental_rank.h)
+set(FACTORLIB_MATH_SLIDING_NORMAL_EQ_HEADER ${FACTORLIB_MATH_HEADER_DIR}/sliding_normal_eq.h)
 
 # ========== 组件：工具库（日志 + 通用工具） ==========
 add_library(factorlib_utils
@@ -177,15 +227,15 @@ add_library(factorlib_utils
         src/utils/nms_bucket_aggregator.cpp
         src/utils/trace_helper.cpp
         src/tools/factor_ic_runtime.cpp
-        include/math/incremental_rank.h
+        ${FACTORLIB_MATH_INCREMENTAL_RANK_HEADER}
         include/utils/config/feed_mode.h
-        include/math/sliding_normal_eq.h
+        ${FACTORLIB_MATH_SLIDING_NORMAL_EQ_HEADER}
         tests/utils/NumCountSimulation.cpp
 )
 
 # 对外暴露工程内头文件（第三方已经通过全局 include_directories 提供）
 target_include_directories(factorlib_utils PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
 )
 
 if (MSVC)
@@ -198,6 +248,7 @@ endif()
 if (FACTORLIB_ENABLE_PERFETTO)
     target_link_libraries(factorlib_utils PUBLIC perfetto)
 endif()
+target_link_libraries(factorlib_utils PUBLIC rollwinop)
 
 # ---------- 组件：基础因子库（现有因子 + 新因子） ----------
 add_library(factor_basic
@@ -222,7 +273,7 @@ add_library(factor_basic
 
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
 )
 
 # ---------- 单元测试 ----------
@@ -264,7 +315,7 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
 
     # 数学工具测试子目录
     if (FACTORLIB_BUILD_MATH_TESTS)
-        add_subdirectory(tests/math_tests)
+        add_subdirectory(${FACTORLIB_MATH_TESTS_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/math_tests)
     endif()
 
     add_executable(factor_ic_tool
