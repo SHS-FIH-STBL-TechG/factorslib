@@ -90,6 +90,11 @@ public:
         double value
     );
 
+    /**
+     * @brief 获取最近一次初始化使用的实际 trace 文件路径（包含时间戳后缀）
+     */
+    static const std::string& current_trace_path();
+
 private:
     static bool initialized_;
     static std::string output_path_;

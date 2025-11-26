@@ -486,7 +486,8 @@ int main() {
     // 初始化 Perfetto 追踪
     bool trace_enabled = factorlib::trace::TraceHelper::initialize("factor_ic_tool.pftrace");
     if (trace_enabled) {
-        std::cout << "[追踪] Perfetto 已启用，trace 将保存到: factor_ic_tool.pftrace" << std::endl;
+        std::cout << "[追踪] Perfetto 已启用，trace 将保存到: "
+                  << factorlib::trace::TraceHelper::current_trace_path() << std::endl;
     }
 
     int result = 1;
@@ -500,7 +501,8 @@ int main() {
     // 关闭追踪并保存文件
     if (trace_enabled) {
         factorlib::trace::TraceHelper::shutdown();
-        std::cout << "[追踪] Trace 已保存到: factor_ic_tool.pftrace" << std::endl;
+        std::cout << "[追踪] Trace 已保存到: "
+                  << factorlib::trace::TraceHelper::current_trace_path() << std::endl;
         std::cout << "        在 https://ui.perfetto.dev 查看可视化结果" << std::endl;
     }
 

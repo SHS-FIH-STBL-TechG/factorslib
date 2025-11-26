@@ -2,6 +2,12 @@
 #include "utils/trace_helper.h"
 #include "utils/log.h"
 
+#include <chrono>
+#include <ctime>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
+
 #ifdef FACTORLIB_ENABLE_PERFETTO
 #include "perfetto.h"
 #include <fstream>
@@ -35,6 +41,38 @@ PERFETTO_TRACK_EVENT_STATIC_STORAGE();
 
 #endif // FACTORLIB_ENABLE_PERFETTO
 
+namespace {
+
+std::string BuildTimestampedPath(const std::string& base_path) {
+    namespace fs = std::filesystem;
+    fs::path input(base_path);
+
+    std::string stem = input.stem().string();
+    if (stem.empty()) {
+        stem = "trace";
+    }
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y%m%d_%H%M%S");
+
+    std::string filename = stem + "_" + oss.str() + input.extension().string();
+    if (input.has_parent_path()) {
+        return (input.parent_path() / filename).string();
+    }
+    return filename;
+}
+
+} // namespace
+
 namespace factorlib {
 namespace trace {
 
@@ -54,7 +92,7 @@ bool TraceHelper::initialize(const std::string& output_path) {
         return true;
     }
 
-    output_path_ = output_path;
+    output_path_ = BuildTimestampedPath(output_path);
 
     // 配置 Perfetto
     perfetto::TracingInitArgs args;
@@ -69,9 +107,9 @@ bool TraceHelper::initialize(const std::string& output_path) {
     ds_cfg->set_name("track_event");
 
     // 启动追踪会话
-    g_trace_file = std::make_unique<std::ofstream>(output_path, std::ios::binary);
+    g_trace_file = std::make_unique<std::ofstream>(output_path_, std::ios::binary);
     if (!g_trace_file->is_open()) {
-        LOG_ERROR("Failed to open trace file: {}", output_path);
+        LOG_ERROR("Failed to open trace file: {}", output_path_);
         return false;
     }
 
@@ -209,7 +247,7 @@ void TraceHelper::trace_counter(
 
 // 没有启用 Perfetto 时的空实现
 bool TraceHelper::initialize(const std::string& output_path) {
-    output_path_ = output_path;
+    output_path_ = BuildTimestampedPath(output_path);
     LOG_INFO("Perfetto tracing is disabled (FACTORLIB_ENABLE_PERFETTO not defined)");
     return false;
 }
@@ -257,6 +295,10 @@ void TraceHelper::trace_counter(
 }
 
 #endif // FACTORLIB_ENABLE_PERFETTO
+
+const std::string& TraceHelper::current_trace_path() {
+    return output_path_;
+}
 
 } // namespace trace
 } // namespace factorlib

@@ -126,6 +126,19 @@ public:
         return P;
     }
 
+    /// 主特征值（谱半径）估计：用于评估转移矩阵的确定性
+    double leading_eigenvalue(int iters=32) const {
+        long long total = 0;
+        for (int sum : row_sum_) total += sum;
+        if (total <= 0) return std::numeric_limits<double>::quiet_NaN();
+        auto P = transition_matrix();
+        double lambda = power_method_dominant_eig(P, iters);
+        if (!std::isfinite(lambda) || lambda <= 0.0) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        return lambda;
+    }
+
     /// 拓扑熵近似：log(谱半径)，基于邻接矩阵 A_{ij}=1(count>0)
     double topological_entropy() const {
         int k = sym_.k();

@@ -9,9 +9,24 @@
 #include <chrono>
 #include <fstream>
 #include <algorithm>
+#include <filesystem>
+#include <system_error>
 
 using namespace factorlib;
 using namespace factorlib::trace;
+
+namespace {
+
+void RemoveTraceFileIfExists() {
+    const std::string& path = TraceHelper::current_trace_path();
+    if (path.empty()) {
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+}
+
+} // namespace
 
 class TraceHelperTest : public ::testing::Test {
 protected:
@@ -19,12 +34,14 @@ protected:
         was_enabled_before_ = TraceHelper::is_enabled();
         if (was_enabled_before_) {
             TraceHelper::shutdown();
+            RemoveTraceFileIfExists();
         }
     }
 
     void TearDown() override {
         // 确保追踪系统关闭
         TraceHelper::shutdown();
+        RemoveTraceFileIfExists();
         if (was_enabled_before_) {
             // 还原全局环境的初始化状态，避免影响其它测试
             TraceHelper::initialize("factor_tests.pftrace");
@@ -65,7 +82,7 @@ TEST_F(TraceHelperTest, TraceEventBasic) {
 
     // 如果启用了 Perfetto，文件应该存在
 #ifdef FACTORLIB_ENABLE_PERFETTO
-    std::ifstream file("test_event.pftrace", std::ios::binary);
+    std::ifstream file(TraceHelper::current_trace_path(), std::ios::binary);
     EXPECT_TRUE(file.good());
     file.close();
 #endif
@@ -156,7 +173,7 @@ TEST_F(TraceHelperTest, FactorComputeTracing) {
 
 #ifdef FACTORLIB_ENABLE_PERFETTO
     // 检查 trace 文件
-    std::ifstream file("test_factor_compute.pftrace", std::ios::binary);
+    std::ifstream file(TraceHelper::current_trace_path(), std::ios::binary);
     EXPECT_TRUE(file.good());
 
     // 检查文件大小（应该有实际内容）

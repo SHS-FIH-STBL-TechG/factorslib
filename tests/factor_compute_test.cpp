@@ -15,7 +15,8 @@ struct GlobalEnv : public ::testing::Environment {
         // 初始化 Perfetto 追踪
         bool trace_enabled = factorlib::trace::TraceHelper::initialize("factor_tests.pftrace");
         if (trace_enabled) {
-            std::cout << "[追踪] Perfetto 已启用，trace 将保存到: factor_tests.pftrace" << std::endl;
+            std::cout << "[追踪] Perfetto 已启用，trace 将保存到: "
+                      << factorlib::trace::TraceHelper::current_trace_path() << std::endl;
         }
     }
 
@@ -23,7 +24,9 @@ struct GlobalEnv : public ::testing::Environment {
         // 关闭追踪并保存文件
         if (factorlib::trace::TraceHelper::is_enabled()) {
             factorlib::trace::TraceHelper::shutdown();
-            std::cout << "[追踪] Trace 已保存，在 https://ui.perfetto.dev 查看" << std::endl;
+            std::cout << "[追踪] Trace 已保存到: "
+                      << factorlib::trace::TraceHelper::current_trace_path()
+                      << "，在 https://ui.perfetto.dev 查看" << std::endl;
         }
     }
 };
