@@ -18,8 +18,6 @@
 /**
  * @file gaussian_copula_factor.h
  * @brief 高斯 Copula 条件期望因子（增量计算优化版）
- *
- * ★ 本版仅做“继承 BaseFactor”的集成性改造，不改你的计算/窗口/发布语义。
  */
 
 namespace factorlib {
@@ -43,7 +41,7 @@ public:
      * @param cfg   配置
      * @param codes 关注代码（委托给 BaseFactor 管理）
      *
-     * ★ 行为不变：仍然使用秩/协方差窗口；仅在窗口满足时发布
+     * 使用秩/协方差窗口；仅在窗口满足时发布
      */
     explicit GaussianCopulaFactor(const GaussianCopulaConfig& cfg, std::vector<std::string> codes);
 
@@ -65,7 +63,6 @@ public:
 protected:
     /**
      * @brief BaseFactor 钩子：首次遇到某代码时调用
-     * ★ 这里不做初始化（避免与 ensure_code 重复初始化），保持原行为：
      *    各回调一律先调用 ensure_code(code) 完成初始化。
      */
     void on_code_added(const std::string& /*code*/) override {}
@@ -106,10 +103,10 @@ private:
     CodeState& ensure_state(const ScopeKey& scope);
     IncrementalState& ensure_incremental(const ScopeKey& scope);
 
-    /// 增量计算条件期望（★ 不改你的算法）
+    /// 增量计算条件期望
     double compute_conditional_expectation_incremental(const std::string& scoped_code);
 
-    /// 全量计算条件期望（保留用于兼容性）
+    /// 全量计算条件期望
     double compute_conditional_expectation(const std::string& scoped_code);
 
     /// 发布因子值（主题固定）

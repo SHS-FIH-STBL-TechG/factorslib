@@ -213,10 +213,17 @@ private:
         // 当调用方只传“纯 code”时，尝试匹配以 code 为前缀的 scope key，确保老逻辑仍能取到数据
         std::string resolve_code_key(const std::string& code) const {
             if (store.find(code) != store.end()) return code;
-            std::string prefix = code + "|f";
-            for (const auto& kv : store) {
-                if (kv.first.rfind(prefix, 0) == 0) return kv.first;
-            }
+
+            // 统一的“前缀匹配 + 找到即返回”逻辑，避免在多窗口场景里遗漏最新值
+            const auto match_scoped = [&](const std::string& prefix) -> std::string {
+                for (const auto& kv : store) {
+                    if (kv.first.rfind(prefix, 0) == 0) return kv.first;
+                }
+                return {};
+            };
+
+            // run_tests 中的用例仍会传裸 code，需要兼容 `code|w{window}` 的组合键
+            if (auto scoped = match_scoped(code + "|w"); !scoped.empty()) return scoped;
             return {};
         }
     };
@@ -242,8 +249,10 @@ private:
 
 // -------------------- 模板实现 --------------------
 
+/// @brief 单例获取：通过局部静态对象保证线程安全懒初始化。
 inline DataBus& DataBus::instance(){ static DataBus bus; return bus; }
 
+/// @brief 注册 topic：若首次见到则绑定类型并分配通道，重复注册直接忽略。
 template<typename T>
 void DataBus::register_topic(const std::string& topic, size_t capacity){
     std::lock_guard<std::mutex> lk(_m);
@@ -253,6 +262,7 @@ void DataBus::register_topic(const std::string& topic, size_t capacity){
     }
 }
 
+/// @brief 内部工具：根据 topic 获取已注册的具体类型通道。
 template<typename T>
 typename DataBus::Channel<T>* DataBus::get_channel(const std::string& topic) const{
     auto it = _topics.find(topic);
@@ -261,6 +271,7 @@ typename DataBus::Channel<T>* DataBus::get_channel(const std::string& topic) con
     return static_cast<Channel<T>*>(it->second.second.get());
 }
 
+/// @brief 发布：写入对应通道并触发订阅/等待。
 template<typename T>
 void DataBus::publish(const std::string& topic, const std::string& code, int64_t ts_ms, const T& value){
     std::lock_guard<std::mutex> lk(_m);
@@ -269,6 +280,7 @@ void DataBus::publish(const std::string& topic, const std::string& code, int64_t
     ch->push(code, ts_ms, value);
 }
 
+/// @brief 读取最新一条记录（若不存在返回 false）。
 template<typename T>
 bool DataBus::get_latest(const std::string& topic, const std::string& code, T& out, int64_t* ts_ms) const{
     std::lock_guard<std::mutex> lk(_m);
@@ -284,6 +296,7 @@ bool DataBus::get_latest(const std::string& topic, const std::string& code, T& o
     return true;
 }
 
+/// @brief 读取精确时间戳 ts_ms 对应的记录。
 template<typename T>
 bool DataBus::get_by_time_exact(const std::string& topic, const std::string& code, int64_t ts_ms, T& out) const{
     std::lock_guard<std::mutex> lk(_m);
@@ -300,6 +313,7 @@ bool DataBus::get_by_time_exact(const std::string& topic, const std::string& cod
     return false;
 }
 
+/// @brief 读取最近 n 条记录（不足 n 条则返回全部）。
 template<typename T>
 std::vector<std::pair<int64_t, T>> DataBus::get_last_n(const std::string& topic, const std::string& code, size_t n) const{
     std::lock_guard<std::mutex> lk(_m);
@@ -318,6 +332,7 @@ std::vector<std::pair<int64_t, T>> DataBus::get_last_n(const std::string& topic,
     return res;
 }
 
+/// @brief 注册订阅回调：发布时会按注册顺序调用。
 template<typename T>
 void DataBus::subscribe(const std::string& topic, const std::string& code,
                         std::function<void(const std::string&, int64_t, const T&)> cb){
@@ -329,6 +344,7 @@ void DataBus::subscribe(const std::string& topic, const std::string& code,
     ch->subs[key].push_back(std::move(cb));
 }
 
+/// @brief 阻塞等待“时间戳恰好等于 ts_ms”的记录。
 template<typename T>
 bool DataBus::wait_for_time_exact(const std::string& topic, const std::string& code,
                                   int64_t ts_ms, T& out, int64_t timeout_ms){
@@ -351,6 +367,7 @@ bool DataBus::wait_for_time_exact(const std::string& topic, const std::string& c
     }
 }
 
+/// @brief 阻塞等待“时间戳 >= ts_ms”的第一条记录。
 template<typename T>
 bool DataBus::wait_for_time_at_least(const std::string& topic, const std::string& code,
                                      int64_t ts_ms, T& out, int64_t timeout_ms){
