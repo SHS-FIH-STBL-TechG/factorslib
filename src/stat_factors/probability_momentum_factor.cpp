@@ -80,11 +80,6 @@ ProbabilityMomentumFactor::ProbabilityMomentumFactor(
     _cfg.window_size = ws;
     _window_sizes = factorlib::config::load_window_sizes("prob_mom", _cfg.window_size);
     clamp_window_list(_window_sizes, "[prob_mom] window_sizes");
-    auto freq_cfg = factorlib::config::load_time_frequencies("prob_mom");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[prob_mom] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 
     double min_w = RC().getd("prob_mom.min_total_weight", _cfg.min_total_weight);
     if (!(min_w > 0.0)) {
@@ -154,12 +149,8 @@ ProbabilityMomentumFactor::CodeState& ProbabilityMomentumFactor::ensure_state(co
  * @details 这样可以避免运行时首次遍历时的 map 扩容，也方便在测试里直接读取。
  */
 void ProbabilityMomentumFactor::on_code_added(const std::string& code) {
-    // 预先为每个 (code, freq, window) 初始化 state，可避免运行时首次访问的锁竞争
-    const auto& freqs = get_time_frequencies();
-    for (auto freq : freqs) {
-        for (int window : _window_sizes) {
-            (void)ensure_state(ScopeKey{code, freq, window});
-        }
+    for (int window : _window_sizes) {
+        (void)ensure_state(ScopeKey{code, window});
     }
 }
 

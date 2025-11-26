@@ -13,11 +13,6 @@ SymbolicTransitionFactor::SymbolicTransitionFactor(const std::vector<std::string
     _cfg.symbols_k   = RC().geti("symbolic.symbols_k",   _cfg.symbols_k);
     _window_sizes    = factorlib::config::load_window_sizes("symbolic", _cfg.window_size);
     clamp_window_list(_window_sizes, "[symbolic] window_sizes");
-    auto freq_cfg = factorlib::config::load_time_frequencies("symbolic");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[symbolic] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 }
 
 

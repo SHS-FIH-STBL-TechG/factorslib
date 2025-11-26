@@ -14,7 +14,6 @@
 #include "../../src/stat_factors/granger_causality_factor.h"
 #include "math/distributions.h"
 #include "utils/databus.h"
-#include "utils/processing_axes.h"
 #include "utils/scope_key.h"
 #include "utils/types.h"
 #include "math/sliding_normal_eq.h"
@@ -166,9 +165,7 @@ protected:
     }
 
     std::string scoped_code(const std::string& code, int window) const {
-        const auto& freqs = get_time_frequencies();
-        int64_t freq = freqs.empty() ? 1 : freqs.front();
-        return compose_scope_code(code, freq, window);
+        return compose_scope_code(code, window);
     }
 
     void feed_signed_order(GrangerCausalityFactor& factor, const std::string& code,

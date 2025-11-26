@@ -14,11 +14,6 @@ HawkesIntensityFactor::HawkesIntensityFactor(const std::vector<std::string>& cod
     _cfg.beta  = RC().getd("hawkes.beta",  _cfg.beta);
     _cfg.dt    = RC().getd("hawkes.dt",    _cfg.dt);
     _window_sizes = {0};
-    auto freq_cfg = factorlib::config::load_time_frequencies("hawkes");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[hawkes] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 }
 
 HawkesIntensityFactor::CodeState& HawkesIntensityFactor::ensure_state(const ScopeKey& scope) {

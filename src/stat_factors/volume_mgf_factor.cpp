@@ -23,11 +23,6 @@ VolumeMGFFactor::VolumeMGFFactor(const std::vector<std::string>& codes,
     _cfg.window_size = ws;
     _window_sizes = factorlib::config::load_window_sizes("vol_mgf", _cfg.window_size);
     clamp_window_list(_window_sizes, "[vol_mgf] window_sizes");
-    auto freq_cfg = factorlib::config::load_time_frequencies("vol_mgf");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[vol_mgf] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 
     double t = RC().getd("vol_mgf.t", _cfg.t);
     if (!(t > 0.0)) {
@@ -58,11 +53,8 @@ VolumeMGFFactor::CodeState& VolumeMGFFactor::ensure_state(const ScopeKey& scope)
 }
 
 void VolumeMGFFactor::on_code_added(const std::string& code) {
-    const auto& freqs = get_time_frequencies();
-    for (auto freq : freqs) {
-        for (int window : _window_sizes) {
-            (void)ensure_state(ScopeKey{code, freq, window});
-        }
+    for (int window : _window_sizes) {
+        (void)ensure_state(ScopeKey{code, window});
     }
 }
 

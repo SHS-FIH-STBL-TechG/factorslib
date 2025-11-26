@@ -36,7 +36,7 @@
  *    - publish_raw_p                 ：是否同时发布原始 p 值。
  *
  * 4. 实现要点
- *    - 每个 ScopeKey(code|freq|window) 拥有独立的 CodeState，保证多窗口隔离；
+ *    - 每个 ScopeKey(code|window) 拥有独立的 CodeState，保证多窗口隔离；
  *    - 通过 SlidingNormalEq 增量维护 OLS，既能滑窗退样，又保持数值稳定；
  *    - p 值/强度发布到固定主题，便于下游读取；
  *    - 日志记录 N/F/RSS 等信息，便于调试。
@@ -46,7 +46,7 @@ namespace factorlib {
 
     using Vec = Eigen::VectorXd;
 
-    // CodeState 用于缓存每个 scope（code|freq|window）的回归器/滑窗信息，
+    // CodeState 用于缓存每个 scope（code|window）的回归器/滑窗信息，
     // 构造时即根据配置初始化受限模型（ne_r）与完整模型（ne_u）的维度。
     GrangerCausalityFactor::CodeState::CodeState(const GrangerConfig& cfg, int window)
         : d_r(1 + std::max(0, cfg.p_lags))
@@ -71,11 +71,6 @@ namespace factorlib {
         _cfg.strength_clip = RC().getd ("granger.strength_clip", _cfg.strength_clip);
         _window_sizes      = factorlib::config::load_window_sizes("granger", _cfg.window_size);
         clamp_window_list(_window_sizes, "[granger] window_sizes");
-        auto freq_cfg = factorlib::config::load_time_frequencies("granger");
-        if (!freq_cfg.empty()) {
-            clamp_frequency_list(freq_cfg, "[granger] time_frequencies");
-            set_time_frequencies_override(freq_cfg);
-        }
     }
 
 
@@ -90,20 +85,18 @@ namespace factorlib {
 
     // ===== BaseFactor 钩子：首次见到某个 code =====
     void GrangerCausalityFactor::on_code_added(const std::string& code) {
-        const auto& freqs = get_time_frequencies();
-        for (auto freq : freqs) {
-            for (int window : _window_sizes) {
-                (void)ensure_state(ScopeKey{code, freq, window});
-            }
+        for (int window : _window_sizes) {
+            (void)ensure_state(ScopeKey{code, window});
         }
     }
 
     // ===== IFactor 事件入口 =====
     void GrangerCausalityFactor::on_quote(const QuoteDepth& q) {
         BaseFactor::ensure_code(q.instrument_id);
-        for_each_scope(q.instrument_id, _window_sizes, q.data_time_ms, [&](const ScopeKey& scope) {
+        for (int window : _window_sizes) {
+            ScopeKey scope{q.instrument_id, window};
             on_any_event_(scope, q.data_time_ms, q, std::nullopt, std::nullopt);
-        });
+        }
     }
 
     void GrangerCausalityFactor::on_tick(const CombinedTick& x) {
@@ -118,9 +111,10 @@ namespace factorlib {
             t.bid_no        = x.bid_no;
             t.ask_no        = x.ask_no;
             BaseFactor::ensure_code(t.instrument_id);
-            for_each_scope(t.instrument_id, _window_sizes, t.data_time_ms, [&](const ScopeKey& scope) {
+            for (int window : _window_sizes) {
+                ScopeKey scope{t.instrument_id, window};
                 on_any_event_(scope, t.data_time_ms, std::nullopt, t, std::nullopt);
-            });
+            }
         } else {
             Entrust e{};
             e.instrument_id = x.instrument_id;
@@ -131,9 +125,10 @@ namespace factorlib {
             e.volume        = x.volume;
             e.order_id      = x.order_id;
             BaseFactor::ensure_code(e.instrument_id);
-            for_each_scope(e.instrument_id, _window_sizes, e.data_time_ms, [&](const ScopeKey& scope) {
+            for (int window : _window_sizes) {
+                ScopeKey scope{e.instrument_id, window};
                 on_any_event_(scope, e.data_time_ms, std::nullopt, std::nullopt, e);
-            });
+            }
         }
     }
 

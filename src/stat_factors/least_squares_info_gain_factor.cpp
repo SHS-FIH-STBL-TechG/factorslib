@@ -29,11 +29,6 @@ LeastSquaresInfoGainFactor::LeastSquaresInfoGainFactor(
     _cfg.window_size = ws;
     _window_sizes = factorlib::config::load_window_sizes("lsig", _cfg.window_size);
     clamp_window_list(_window_sizes, "[lsig] window_sizes");
-    auto freq_cfg = factorlib::config::load_time_frequencies("lsig");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[lsig] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 }
 
 void LeastSquaresInfoGainFactor::register_topics(size_t capacity) {
@@ -72,11 +67,8 @@ LeastSquaresInfoGainFactor::CodeState& LeastSquaresInfoGainFactor::ensure_state(
 }
 
 void LeastSquaresInfoGainFactor::on_code_added(const std::string& code) {
-    const auto& freqs = get_time_frequencies();
-    for (auto freq : freqs) {
-        for (int window : _window_sizes) {
-            (void)ensure_state(ScopeKey{code, freq, window});
-        }
+    for (int window : _window_sizes) {
+        (void)ensure_state(ScopeKey{code, window});
     }
 }
 

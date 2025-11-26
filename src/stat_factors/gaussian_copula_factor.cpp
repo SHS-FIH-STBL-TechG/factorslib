@@ -34,12 +34,11 @@
  *
  * 3. 配置来源（runtime_config.ini -> [gaussian]）
  *        - window_size/window_sizes ：支持多窗口并行；
- *        - time_frequencies        ：可选的多频率运行；
  *        - regularization          ：对 Σ 加对角线，提升数值稳定性；
- *      其余频率/窗口上限由 BaseFactor 负责夹紧。
+ *      其余窗口上限由 BaseFactor 负责夹紧。
  *
  * 4. 设计要点
- *        - 使用 ScopeKey = code|freq|window 作为状态键，确保多窗口互不干扰；
+ *        - 使用 ScopeKey = code|window 作为状态键，确保多窗口互不干扰；
  *        - 增量秩 + 协方差均衡了排序鲁棒性与实时性，适合长窗口；
  *        - force_flush 允许外部在窗口满时强制输出（需传入 scope code）；
  *        - 日志中详细记录窗口初始化、未满提醒及强制刷新过程，便于排障。
@@ -62,11 +61,6 @@ GaussianCopulaFactor::GaussianCopulaFactor(const GaussianCopulaConfig& cfg,
     _cfg.regularization = RC().getd ("gaussian.regularization", _cfg.regularization);
     _window_sizes       = factorlib::config::load_window_sizes("gaussian", _cfg.window_size);
     clamp_window_list(_window_sizes, "[gaussian] window_sizes");
-    auto freq_cfg = factorlib::config::load_time_frequencies("gaussian");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[gaussian] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 }
 
 void GaussianCopulaFactor::register_topics(size_t capacity) {
@@ -99,8 +93,8 @@ GaussianCopulaFactor::IncrementalState& GaussianCopulaFactor::ensure_incremental
 
 void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
     BaseFactor::ensure_code(q.instrument_id);
-    // 针对每个频率/窗口组合分别更新 Copula 状态
-    for_each_scope(q.instrument_id, _window_sizes, q.data_time_ms, [&](const ScopeKey& scope) {
+    for (int window : _window_sizes) {
+        ScopeKey scope{q.instrument_id, window};
         auto& state = ensure_state(scope);
         auto& inc_state = ensure_incremental(scope);
         const std::string scoped_code = scope.as_bus_code();
@@ -132,10 +126,10 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
 
         state.last_mid_price = mid_price;
         state.has_initial_price = true;
-    });
+    }
 }
 
-    void GaussianCopulaFactor::on_tick(const CombinedTick& x) {
+void GaussianCopulaFactor::on_tick(const CombinedTick& x) {
     if (x.kind == CombinedKind::Order) {
         Entrust e{};
         e.instrument_id = x.instrument_id;
@@ -147,7 +141,8 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
         e.order_id      = x.order_id;
 
         BaseFactor::ensure_code(e.instrument_id);
-        for_each_scope(e.instrument_id, _window_sizes, e.data_time_ms, [&](const ScopeKey& scope) {
+        for (int window : _window_sizes) {
+            ScopeKey scope{e.instrument_id, window};
             auto& state = ensure_state(scope);
             if (e.side == 1) {
                 state.current_ofi += static_cast<double>(e.volume);
@@ -155,7 +150,7 @@ void GaussianCopulaFactor::on_quote(const QuoteDepth& q) {
                 state.current_ofi -= static_cast<double>(e.volume);
             }
             state.current_volume += static_cast<double>(e.volume);
-        });
+        }
     } else {
         (void)x;
     }

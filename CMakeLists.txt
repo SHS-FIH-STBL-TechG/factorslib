@@ -133,7 +133,6 @@ add_library(factorlib_utils
         src/utils/data_adapter.cpp
         src/utils/trading_time.cpp
         src/utils/nms_bucket_aggregator.cpp
-        src/utils/processing_axes.cpp
         include/math/incremental_rank.h
         include/utils/config/feed_mode.h
         include/math/sliding_normal_eq.h
@@ -185,6 +184,7 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     set(FACTORLIB_TEST_SOURCES
             tests/basic_factors_tests/tick_trans_orders_test.cpp
             tests/test_wait.cpp
+            tests/utils/databus_test.cpp
             tests/factor_compute_test.cpp
             tests/utils/test_config.h
             tests/utils/test_config.cpp

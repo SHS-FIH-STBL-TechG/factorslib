@@ -53,11 +53,6 @@ public:
         _cfg.alpha       = config::RC().getd("mem_kernel.alpha",       _cfg.alpha);
         _window_sizes    = config::load_window_sizes("mem_kernel", _cfg.window_size);
         clamp_window_list(_window_sizes, "[mem_kernel] window_sizes");
-        auto freq_cfg = config::load_time_frequencies("mem_kernel");
-        if (!freq_cfg.empty()) {
-            clamp_frequency_list(freq_cfg, "[mem_kernel] time_frequencies");
-            set_time_frequencies_override(freq_cfg);
-        }
     }
 
     static void register_topics(size_t capacity=120) {

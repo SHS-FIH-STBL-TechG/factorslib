@@ -28,8 +28,6 @@ protected:
         min_sigma_        = cfg.getd("prob_mom.min_sigma", 1e-6);
         buy_threshold_    = cfg.getd("prob_mom.buy_threshold", 0.7);
         sell_threshold_   = cfg.getd("prob_mom.sell_threshold", 0.3);
-        auto& freqs = get_time_frequencies();
-        freq_ms_ = freqs.empty()? 1 : freqs.front();
     }
 
     void TearDown() override {
@@ -144,7 +142,7 @@ protected:
     }
 
     std::string scoped_code() const {
-        return compose_scope_code(codes_.front(), freq_ms_, window_size_);
+        return compose_scope_code(codes_.front(), window_size_);
     }
 
     bool latest_prob(double& out, int64_t* ts = nullptr) const {
@@ -188,7 +186,6 @@ protected:
     double min_sigma_{1e-6};
     double buy_threshold_{0.7};
     double sell_threshold_{0.3};
-    int64_t freq_ms_{1};
     double last_price_anchor_{100.0};
     int64_t last_ts_{0};
 };

@@ -38,11 +38,6 @@ PcaStructureStabilityFactor::PcaStructureStabilityFactor(
     if (_cfg.lr <= 0.0) _cfg.lr = 0.05;
     if (_cfg.warmup < 8) _cfg.warmup = 8;
     _window_sizes = {0};
-    auto freq_cfg = factorlib::config::load_time_frequencies("pca_stab");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[pca_stab] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 }
 
 // =====================[ topic 注册 ]=====================
@@ -63,14 +58,11 @@ PcaStructureStabilityFactor::CodeState& PcaStructureStabilityFactor::ensure_stat
     return it->second;
 }
 
-void PcaStructureStabilityFactor::on_code_added(const std::string& code) {
-    const auto& freqs = get_time_frequencies();
-    for (auto freq : freqs) {
+    void PcaStructureStabilityFactor::on_code_added(const std::string& code) {
         for (int window : _window_sizes) {
-            (void)ensure_state(ScopeKey{code, freq, window});
+            (void)ensure_state(ScopeKey{code, window});
         }
     }
-}
 
 // =====================[ 特征构造 ]=====================
 

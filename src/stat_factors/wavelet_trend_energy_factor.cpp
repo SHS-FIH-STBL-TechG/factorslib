@@ -51,11 +51,6 @@ WaveletTrendEnergyFactor::WaveletTrendEnergyFactor(
     _cfg.wavelet    = RC().get("wave_trend.wavelet",    _cfg.wavelet);
     _window_sizes   = factorlib::config::load_window_sizes("wave_trend", _cfg.window_size);
     clamp_window_list(_window_sizes, "[wave_trend] window_sizes");
-    auto freq_cfg   = factorlib::config::load_time_frequencies("wave_trend");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[wave_trend] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 }
 
 // =====================[ DataBus topic 注册 ]=====================
@@ -81,11 +76,8 @@ WaveletTrendEnergyFactor::CodeState& WaveletTrendEnergyFactor::ensure_state(cons
 }
 
 void WaveletTrendEnergyFactor::on_code_added(const std::string& code) {
-    const auto& freqs = get_time_frequencies();
-    for (auto freq : freqs) {
-        for (int window : _window_sizes) {
-            (void)ensure_state(ScopeKey{code, freq, window});
-        }
+    for (int window : _window_sizes) {
+        (void)ensure_state(ScopeKey{code, window});
     }
 }
 

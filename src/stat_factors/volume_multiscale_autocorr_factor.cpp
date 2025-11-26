@@ -36,11 +36,6 @@ VolumeMultiscaleAutocorrFactor::VolumeMultiscaleAutocorrFactor(
     _cfg.window_size = ws;
     _window_sizes = factorlib::config::load_window_sizes("vol_ac", _cfg.window_size);
     clamp_window_list(_window_sizes, "[vol_ac] window_sizes");
-    auto freq_cfg = factorlib::config::load_time_frequencies("vol_ac");
-    if (!freq_cfg.empty()) {
-        clamp_frequency_list(freq_cfg, "[vol_ac] time_frequencies");
-        set_time_frequencies_override(freq_cfg);
-    }
 
     _cfg.lag1 = RC().geti("vol_ac.lag1", _cfg.lag1);
     _cfg.lag2 = RC().geti("vol_ac.lag2", _cfg.lag2);
@@ -77,11 +72,8 @@ VolumeMultiscaleAutocorrFactor::CodeState& VolumeMultiscaleAutocorrFactor::ensur
 }
 
 void VolumeMultiscaleAutocorrFactor::on_code_added(const std::string& code) {
-    const auto& freqs = get_time_frequencies();
-    for (auto freq : freqs) {
-        for (int window : _window_sizes) {
-            (void)ensure_state(ScopeKey{code, freq, window});
-        }
+    for (int window : _window_sizes) {
+        (void)ensure_state(ScopeKey{code, window});
     }
 }
 
