@@ -17,6 +17,7 @@ option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
 option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
+option(FACTORLIB_ENABLE_IC_RUNTIME "Enable IC evaluation runtime" ON)
 # 打印所有相关选项
 message(STATUS "========== factorlib CMake options ==========")
 
@@ -28,6 +29,7 @@ foreach(opt
         FACTORLIB_BUILD_UNIT_TESTS
         FACTORLIB_BUILD_MATH_TESTS
         FACTORLIB_ENABLE_PARALLEL_INGRESS
+        FACTORLIB_ENABLE_IC_RUNTIME
 )
     message(STATUS "  ${opt} = ${${opt}}")
 endforeach()
@@ -126,6 +128,12 @@ if (FACTORLIB_ENABLE_PARALLEL_INGRESS)
     add_definitions(-DFACTORLIB_ENABLE_PARALLEL_INGRESS=1)
 endif()
 
+if (FACTORLIB_ENABLE_IC_RUNTIME)
+    add_definitions(-DFACTORLIB_ENABLE_IC_RUNTIME=1)
+else()
+    add_definitions(-DFACTORLIB_ENABLE_IC_RUNTIME=0)
+endif()
+
 # ========== 组件：工具库（日志 + 通用工具） ==========
 add_library(factorlib_utils
         src/utils/log.cpp
@@ -133,6 +141,7 @@ add_library(factorlib_utils
         src/utils/data_adapter.cpp
         src/utils/trading_time.cpp
         src/utils/nms_bucket_aggregator.cpp
+        src/tools/factor_ic_runtime.cpp
         include/math/incremental_rank.h
         include/utils/config/feed_mode.h
         include/math/sliding_normal_eq.h
@@ -190,21 +199,24 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/utils/test_config.cpp
             tests/utils/NumCountSimulation.cpp
             tests/utils/NumCountSimulation.h
+            tests/tools/factor_ic_runtime_test.cpp
     )
 
-    add_executable(run_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
-    target_link_libraries(run_tests PRIVATE factor_basic factorlib_utils gtest gtest_main)
+    add_executable(factorlib_unit_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
+    # Keep the binary name as run_tests.exe but avoid clashing with Visual Studio's RUN_TESTS target
+    set_target_properties(factorlib_unit_tests PROPERTIES OUTPUT_NAME run_tests)
+    target_link_libraries(factorlib_unit_tests PRIVATE factor_basic factorlib_utils gtest gtest_main)
 
     if (NOT MSVC)
-        target_link_libraries(run_tests PRIVATE Threads::Threads)
+        target_link_libraries(factorlib_unit_tests PRIVATE Threads::Threads)
     endif()
 
     # demo_header 路径
-    target_include_directories(run_tests PRIVATE
+    target_include_directories(factorlib_unit_tests PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/../demo_header
     )
 
-    add_test(NAME run_all COMMAND run_tests)
+    add_test(NAME run_all COMMAND $<TARGET_FILE:factorlib_unit_tests>)
 
     # stat_factors 测试子目录
     add_subdirectory(tests/stat_factors_tests)
@@ -217,4 +229,5 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     add_executable(factor_ic_tool
             tests/factor_ic_tool.cpp
     )
+    target_link_libraries(factor_ic_tool PRIVATE factor_basic factorlib_utils)
 endif()
