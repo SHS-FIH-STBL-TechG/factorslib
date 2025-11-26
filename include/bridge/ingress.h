@@ -30,5 +30,6 @@ void ingest_kline(const std::vector<std_BasicandEnhanceKLine>& v);
 void ingest_snapshot_sh(const std::vector<factorlib::QuoteDepth>& v);
 void ingest_snapshot_sz(const std::vector<factorlib::QuoteDepth>& v);
 void ingest_ont(const std::vector<factorlib::CombinedTick>& v);
+void ingest_kline(const std::vector<factorlib::Bar>& v);
 
 } // namespace factorlib::bridge
