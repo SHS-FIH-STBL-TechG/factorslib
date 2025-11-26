@@ -8,6 +8,17 @@
 #include <memory>
 #include <thread>
 
+// MSVC 在链接 TrackEvent 静态库时偶尔会遗漏 DataSourceHelper 的隐式实例化，
+// 这里显式实例化一次以确保符号定义存在。
+namespace perfetto {
+template <>
+internal::DataSourceType& DataSourceHelper<internal::TrackEventDataSource,
+                                           internal::TrackEventDataSourceTraits>::type() {
+    static internal::DataSourceType type{};
+    return type;
+}
+} // namespace perfetto
+
 // 定义 Perfetto 追踪分类
 PERFETTO_DEFINE_CATEGORIES(
     perfetto::Category("ingress")
@@ -34,6 +45,7 @@ std::string TraceHelper::output_path_;
 
 namespace {
     std::unique_ptr<std::ofstream> g_trace_file;
+    std::unique_ptr<perfetto::TracingSession> g_tracing_session;
 }
 
 bool TraceHelper::initialize(const std::string& output_path) {
@@ -63,9 +75,9 @@ bool TraceHelper::initialize(const std::string& output_path) {
         return false;
     }
 
-    auto tracing_session = perfetto::Tracing::NewTrace();
-    tracing_session->Setup(cfg);
-    tracing_session->StartBlocking();
+    g_tracing_session = perfetto::Tracing::NewTrace();
+    g_tracing_session->Setup(cfg);
+    g_tracing_session->StartBlocking();
 
     initialized_ = true;
     LOG_INFO("Perfetto tracing initialized, output: {}", output_path);
@@ -77,18 +89,21 @@ void TraceHelper::shutdown() {
         return;
     }
 
-    // 停止追踪
-    auto tracing_session = perfetto::Tracing::NewTrace();
-    tracing_session->StopBlocking();
+    if (g_tracing_session) {
+        // 停止追踪
+        g_tracing_session->StopBlocking();
 
-    // 读取追踪数据
-    std::vector<char> trace_data(tracing_session->ReadTraceBlocking());
+        // 读取追踪数据
+        std::vector<char> trace_data(g_tracing_session->ReadTraceBlocking());
 
-    // 写入文件
-    if (g_trace_file && g_trace_file->is_open()) {
-        g_trace_file->write(trace_data.data(), trace_data.size());
-        g_trace_file->close();
-        LOG_INFO("Trace saved to: {}, size: {} bytes", output_path_, trace_data.size());
+        // 写入文件
+        if (g_trace_file && g_trace_file->is_open()) {
+            g_trace_file->write(trace_data.data(), trace_data.size());
+            g_trace_file->close();
+            LOG_INFO("Trace saved to: {}, size: {} bytes", output_path_, trace_data.size());
+        }
+
+        g_tracing_session.reset();
     }
 
     g_trace_file.reset();
@@ -110,16 +125,19 @@ uint64_t TraceHelper::begin_scope(
         return 0;
     }
 
-    // 使用 unique_id 作为追踪 ID
-    // Perfetto 会自动处理 begin/end 配对
-    TRACE_EVENT_BEGIN(
-        category,
-        perfetto::StaticString(name),
-        perfetto::Track(unique_id),
-        "code", code,
-        "window", window,
-        "unique_id", unique_id
-    );
+    // 使用 Perfetto 的 TRACE_EVENT_BEGIN 宏
+    perfetto::Track track(unique_id);
+
+    // 根据 category 字符串选择对应的分类
+    if (std::string(category) == "ingress") {
+        TRACE_EVENT_BEGIN("ingress", perfetto::StaticString{name}, track, "code", code, "window", window);
+    } else if (std::string(category) == "factor_compute") {
+        TRACE_EVENT_BEGIN("factor_compute", perfetto::StaticString{name}, track, "code", code, "window", window);
+    } else if (std::string(category) == "factor_window") {
+        TRACE_EVENT_BEGIN("factor_window", perfetto::StaticString{name}, track, "code", code, "window", window);
+    } else if (std::string(category) == "databus") {
+        TRACE_EVENT_BEGIN("databus", perfetto::StaticString{name}, track, "code", code, "window", window);
+    }
 
     return unique_id;
 }
@@ -129,7 +147,10 @@ void TraceHelper::end_scope(uint64_t trace_id) {
         return;
     }
 
-    TRACE_EVENT_END(perfetto::Track(trace_id));
+    perfetto::Track track(trace_id);
+    // TRACE_EVENT_END 需要 category，但我们不知道原始的 category
+    // 使用一个通用的 category
+    TRACE_EVENT_END("ingress", track);
 }
 
 void TraceHelper::trace_event(
@@ -143,14 +164,18 @@ void TraceHelper::trace_event(
         return;
     }
 
-    TRACE_EVENT_INSTANT(
-        category,
-        perfetto::StaticString(name),
-        perfetto::Track(unique_id),
-        "code", code,
-        "window", window,
-        "unique_id", unique_id
-    );
+    perfetto::Track track(unique_id);
+
+    // 根据 category 字符串选择对应的分类，使用 TRACE_EVENT_INSTANT
+    if (std::string(category) == "ingress") {
+        TRACE_EVENT_INSTANT("ingress", perfetto::StaticString{name}, track, "code", code, "window", window);
+    } else if (std::string(category) == "factor_compute") {
+        TRACE_EVENT_INSTANT("factor_compute", perfetto::StaticString{name}, track, "code", code, "window", window);
+    } else if (std::string(category) == "factor_window") {
+        TRACE_EVENT_INSTANT("factor_window", perfetto::StaticString{name}, track, "code", code, "window", window);
+    } else if (std::string(category) == "databus") {
+        TRACE_EVENT_INSTANT("databus", perfetto::StaticString{name}, track, "code", code, "window", window);
+    }
 }
 
 void TraceHelper::trace_counter(
@@ -166,12 +191,18 @@ void TraceHelper::trace_counter(
 
     // 为每个 code+window 组合创建唯一的 counter track
     uint64_t track_id = std::hash<std::string>{}(code + "_" + std::to_string(window));
+    perfetto::CounterTrack counter_track(perfetto::DynamicString{name}, track_id);
 
-    TRACE_COUNTER(
-        category,
-        perfetto::CounterTrack(track_id, perfetto::StaticString(name)),
-        value
-    );
+    // 根据 category 字符串选择对应的分类
+    if (std::string(category) == "ingress") {
+        TRACE_COUNTER("ingress", counter_track, value);
+    } else if (std::string(category) == "factor_compute") {
+        TRACE_COUNTER("factor_compute", counter_track, value);
+    } else if (std::string(category) == "factor_window") {
+        TRACE_COUNTER("factor_window", counter_track, value);
+    } else if (std::string(category) == "databus") {
+        TRACE_COUNTER("databus", counter_track, value);
+    }
 }
 
 #else // !FACTORLIB_ENABLE_PERFETTO

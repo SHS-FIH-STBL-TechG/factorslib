@@ -10,7 +10,7 @@ namespace trace {
 /**
  * @brief Perfetto 追踪辅助类
  *
- * 用于追踪因子计算流程，支持为每个因子的每个窗口生成唯一的追踪 ID。
+ * 用于追踪因子计算流程,支持为每个因子的每个窗口生成唯一的追踪 ID。
  * 生成的 trace 可以在 https://ui.perfetto.dev 上可视化查看。
  */
 class TraceHelper {
@@ -132,26 +132,25 @@ private:
     uint64_t trace_id_;
 };
 
-// 便捷宏定义
-#ifdef FACTORLIB_ENABLE_PERFETTO
-
-#define TRACE_SCOPE(category, name, code, window, unique_id) \
-    factorlib::trace::TraceScope _trace_scope_##__LINE__(category, name, code, window, unique_id)
-
-#define TRACE_EVENT(category, name, code, window, unique_id) \
-    factorlib::trace::TraceHelper::trace_event(category, name, code, window, unique_id)
-
-#define TRACE_COUNTER(category, name, code, window, value) \
-    factorlib::trace::TraceHelper::trace_counter(category, name, code, window, value)
-
-#else
-
-// 禁用追踪时为空操作
-#define TRACE_SCOPE(category, name, code, window, unique_id) (void)0
-#define TRACE_EVENT(category, name, code, window, unique_id) (void)0
-#define TRACE_COUNTER(category, name, code, window, value) (void)0
-
-#endif // FACTORLIB_ENABLE_PERFETTO
-
 } // namespace trace
 } // namespace factorlib
+
+// 便捷宏定义（不定义会与 Perfetto SDK 冲突的宏名）
+#ifndef FACTORLIB_TRACE_SCOPE
+#define FACTORLIB_TRACE_SCOPE(category, name, code, window, unique_id) \
+    factorlib::trace::TraceScope _factorlib_trace_scope_##__LINE__(category, name, code, window, unique_id)
+
+#define FACTORLIB_TRACE_EVENT(category, name, code, window, unique_id) \
+    factorlib::trace::TraceHelper::trace_event(category, name, code, window, unique_id)
+
+#define FACTORLIB_TRACE_COUNTER(category, name, code, window, value) \
+    factorlib::trace::TraceHelper::trace_counter(category, name, code, window, value)
+
+// 简化的宏名（仅在不启用 Perfetto 时或用户代码中使用）
+#ifndef FACTORLIB_ENABLE_PERFETTO
+#define TRACE_SCOPE FACTORLIB_TRACE_SCOPE
+#define TRACE_EVENT FACTORLIB_TRACE_EVENT
+#define TRACE_COUNTER FACTORLIB_TRACE_COUNTER
+#endif
+
+#endif // FACTORLIB_TRACE_SCOPE

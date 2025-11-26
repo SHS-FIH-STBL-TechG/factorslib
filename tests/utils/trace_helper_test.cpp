@@ -7,6 +7,8 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <fstream>
+#include <algorithm>
 
 using namespace factorlib;
 using namespace factorlib::trace;
@@ -14,13 +16,23 @@ using namespace factorlib::trace;
 class TraceHelperTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // 每个测试前清理
+        was_enabled_before_ = TraceHelper::is_enabled();
+        if (was_enabled_before_) {
+            TraceHelper::shutdown();
+        }
     }
 
     void TearDown() override {
         // 确保追踪系统关闭
         TraceHelper::shutdown();
+        if (was_enabled_before_) {
+            // 还原全局环境的初始化状态，避免影响其它测试
+            TraceHelper::initialize("factor_tests.pftrace");
+        }
     }
+
+private:
+    bool was_enabled_before_ = false;
 };
 
 TEST_F(TraceHelperTest, InitializeAndShutdown) {
@@ -91,10 +103,8 @@ TEST_F(TraceHelperTest, IngressTracing) {
     std::vector<Bar> bars;
     for (int i = 0; i < 5; ++i) {
         Bar b;
-        b.code = "000001.SZ";
         b.instrument_id = "000001.SZ";
-        b.timestamp = 1609459200000LL + i * 60000; // 每分钟一个 bar
-        b.data_time_ms = b.timestamp;
+        b.data_time_ms = 1609459200000LL + i * 60000; // 每分钟一个 bar
         b.open = 10.0 + i * 0.1;
         b.high = 10.5 + i * 0.1;
         b.low = 9.5 + i * 0.1;
@@ -129,10 +139,8 @@ TEST_F(TraceHelperTest, FactorComputeTracing) {
     std::vector<Bar> bars;
     for (int i = 0; i < 20; ++i) {
         Bar b;
-        b.code = "000001.SZ";
         b.instrument_id = "000001.SZ";
-        b.timestamp = 1609459200000LL + i * 60000;
-        b.data_time_ms = b.timestamp;
+        b.data_time_ms = 1609459200000LL + i * 60000;
         b.open = 10.0;
         b.high = 10.5;
         b.low = 9.5;
@@ -178,10 +186,8 @@ TEST_F(TraceHelperTest, MultipleWindowsTracing) {
     std::vector<Bar> bars;
     for (int i = 0; i < 50; ++i) {
         Bar b;
-        b.code = "000001.SZ";
         b.instrument_id = "000001.SZ";
-        b.timestamp = 1609459200000LL + i * 1000; // 每秒一个
-        b.data_time_ms = b.timestamp;
+        b.data_time_ms = 1609459200000LL + i * 1000; // 每秒一个
         b.volume = 1000 + (i % 20) * 100;
         bars.push_back(b);
     }
@@ -203,25 +209,26 @@ TEST_F(TraceHelperTest, PerformanceOverhead) {
         (void)x;
     }
     auto end = std::chrono::high_resolution_clock::now();
-    auto duration_no_trace = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    auto duration_no_trace = std::chrono::duration<double, std::micro>(end - start).count();
 
     // 启用追踪的情况
     TraceHelper::initialize("test_performance.pftrace");
     start = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < num_events; ++i) {
-        TRACE_EVENT("perf_test", "test_event", "000001.SZ", 0, i);
+        FACTORLIB_TRACE_EVENT("perf_test", "test_event", "000001.SZ", 0, i);
         volatile int x = i * i;
         (void)x;
     }
     end = std::chrono::high_resolution_clock::now();
-    auto duration_with_trace = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    auto duration_with_trace = std::chrono::duration<double, std::micro>(end - start).count();
     TraceHelper::shutdown();
 
 #ifdef FACTORLIB_ENABLE_PERFETTO
-    // 追踪开销应该在合理范围内（不超过 10 倍）
-    double overhead = static_cast<double>(duration_with_trace) / duration_no_trace;
-    std::cout << "Trace overhead: " << overhead << "x" << std::endl;
-    EXPECT_LT(overhead, 10.0);
+    // 关注单次事件新增的绝对耗时（微秒），避免因基准耗时过小导致比例失真
+    double per_event_overhead =
+        std::max(0.0, (duration_with_trace - duration_no_trace) / num_events);
+    std::cout << "Trace overhead per event: " << per_event_overhead << " us" << std::endl;
+    EXPECT_LT(per_event_overhead, 200.0);
 #else
     // 未启用时，开销应该几乎为零
     EXPECT_NEAR(duration_with_trace, duration_no_trace, duration_no_trace * 0.1);

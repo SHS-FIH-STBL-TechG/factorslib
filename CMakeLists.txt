@@ -18,7 +18,7 @@ option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
 option(FACTORLIB_ENABLE_IC_RUNTIME "Enable IC evaluation runtime" ON)
-option(FACTORLIB_ENABLE_PERFETTO "Enable Perfetto performance tracing" OFF)
+option(FACTORLIB_ENABLE_PERFETTO "Enable Perfetto performance tracing" ON)
 # 打印所有相关选项
 message(STATUS "========== factorlib CMake options ==========")
 

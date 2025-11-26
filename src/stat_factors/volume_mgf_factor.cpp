@@ -74,7 +74,7 @@ void VolumeMGFFactor::on_volume_event(const std::string& code_raw,
     ensure_code(code_raw);
     for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
         // 为每个窗口的计算创建追踪作用域
-        TRACE_SCOPE("factor_compute", "VolumeMGF", code_raw, scope.window, unique_id);
+        FACTORLIB_TRACE_SCOPE("factor_compute", "VolumeMGF", code_raw, scope.window, unique_id);
 
         auto& S = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
@@ -103,8 +103,8 @@ void VolumeMGFFactor::on_volume_event(const std::string& code_raw,
             compute_and_publish(scoped_code, S, ts_ms);
 
             // 追踪计数器：记录当前窗口大小
-            TRACE_COUNTER("factor_compute", "window_size", code_raw, scope.window,
-                         static_cast<double>(S.window.size()));
+            FACTORLIB_TRACE_COUNTER("factor_compute", "window_size", code_raw, scope.window,
+                                    static_cast<double>(S.window.size()));
         }
     });
 }
