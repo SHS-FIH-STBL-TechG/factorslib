@@ -30,6 +30,8 @@
 
 #include "bridge/ingress.h"
 #include "stat_factors/memory_kernel_decay_factor.h"
+#include "stat_factors/pca_angular_momentum_factor.h"
+#include "stat_factors/pca_structure_stability_factor.h"
 #include "utils/databus.h"
 #include "utils/scope_key.h"
 #include "utils/types.h"
@@ -303,6 +305,61 @@ inline double compute_correlation(const std::vector<TableFactorSample>& samples)
     return cov / std::sqrt(var_x * var_y);
 }
 
+struct IcSeriesMetrics {
+    double ic{};
+    double ratio_abs_gt_0_1{};
+    double ratio_abs_gt_0_5{};
+    double ratio_abs_gt_0_9{};
+};
+
+IcSeriesMetrics compute_ic_metrics(const std::vector<TableFactorSample>& samples) {
+    IcSeriesMetrics metrics;
+    metrics.ic = compute_correlation(samples);
+
+    double sum_x = 0.0;
+    double sum_y = 0.0;
+    double sum_x2 = 0.0;
+    double sum_y2 = 0.0;
+    double sum_xy = 0.0;
+    std::size_t count = 0;
+    std::size_t valid_history = 0;
+    std::size_t gt_0_1 = 0;
+    std::size_t gt_0_5 = 0;
+    std::size_t gt_0_9 = 0;
+
+    for (const auto& sample : samples) {
+        if (!std::isfinite(sample.factor) || !std::isfinite(sample.forward)) continue;
+        ++count;
+        sum_x += sample.factor;
+        sum_y += sample.forward;
+        sum_x2 += sample.factor * sample.factor;
+        sum_y2 += sample.forward * sample.forward;
+        sum_xy += sample.factor * sample.forward;
+        if (count < 2) continue;
+        double mean_x = sum_x / static_cast<double>(count);
+        double mean_y = sum_y / static_cast<double>(count);
+        double var_x = sum_x2 - static_cast<double>(count) * mean_x * mean_x;
+        double var_y = sum_y2 - static_cast<double>(count) * mean_y * mean_y;
+        if (var_x <= 0.0 || var_y <= 0.0) continue;
+        double cov = sum_xy - static_cast<double>(count) * mean_x * mean_y;
+        double corr = cov / std::sqrt(var_x * var_y);
+        if (!std::isfinite(corr)) continue;
+        ++valid_history;
+        const double abs_corr = std::abs(corr);
+        if (abs_corr > 0.1) ++gt_0_1;
+        if (abs_corr > 0.5) ++gt_0_5;
+        if (abs_corr > 0.9) ++gt_0_9;
+    }
+
+    if (valid_history > 0) {
+        const double denom = static_cast<double>(valid_history);
+        metrics.ratio_abs_gt_0_1 = static_cast<double>(gt_0_1) / denom;
+        metrics.ratio_abs_gt_0_5 = static_cast<double>(gt_0_5) / denom;
+        metrics.ratio_abs_gt_0_9 = static_cast<double>(gt_0_9) / denom;
+    }
+    return metrics;
+}
+
 /**
  * @brief orchestrator：完成“加载 → 下发 → 取数 → 统计 → 打印”整条链路。
  *
@@ -333,14 +390,22 @@ public:
 
         DataBus::instance().reset();
         MemoryKernelDecayFactor::register_topics(topic_capacity_);
+        PcaAngularMomentumFactor::register_topics(topic_capacity_);
+        PcaStructureStabilityFactor::register_topics(topic_capacity_);
 
         MemoryKernelConfig cfg;
         cfg.window_size = 64;
         cfg.L = 24;
         cfg.alpha = 0.7;
 
-        auto factor = std::make_shared<MemoryKernelDecayFactor>(codes, cfg);
-        bridge::set_factors({factor});
+        auto mem_factor = std::make_shared<MemoryKernelDecayFactor>(codes, cfg);
+        PcaAngularMomentumConfig pca_cfg;
+        auto pca_factor = std::make_shared<PcaAngularMomentumFactor>(codes, pca_cfg);
+
+        PcaStructureStabilityConfig stab_cfg;
+        auto stab_factor = std::make_shared<PcaStructureStabilityFactor>(codes, stab_cfg);
+
+        bridge::set_factors({mem_factor, pca_factor, stab_factor});
 
         factorlib::tools::ic_runtime_clear();
 
@@ -372,13 +437,13 @@ private:
     static constexpr std::size_t topic_capacity_ = 8'192;
 
     /**
-     * @brief 输出“==== MemoryKernelDecayFactor IC 统计 [表名] ====”，并展示该表的时间序列指标。
+     * @brief 输出“==== IC 统计 [表名] ====”，并展示该表的时间序列指标。
      */
     void print_table_reports(const std::vector<TableIcReport>& reports) const {
         if (reports.empty()) return;
         std::cout << "\n";
         for (const auto& report : reports) {
-            std::cout << "==== MemoryKernelDecayFactor IC 统计 ["
+            std::cout << "====  IC 统计 ["
                       << report.table_name << "] ====" << std::endl;
             std::cout << "  代码: " << report.code << std::endl;
             if (report.topics.empty()) {
@@ -392,42 +457,24 @@ private:
                     std::cout << " (window=" << series.scope.window << ")";
                 }
                 std::cout << " | 样本数: " << sample_cnt << std::endl;
-                double ic = compute_correlation(series.samples);
+                auto metrics = compute_ic_metrics(series.samples);
+                double ic = metrics.ic;
                 if (sample_cnt < 2 || !std::isfinite(ic)) {
                     std::cout << "    时间序列 IC: 样本不足" << std::endl;
                 } else {
                     std::cout << "    时间序列 IC: " << ic << std::endl;
+                    if (metrics.ratio_abs_gt_0_1 > 0.1) {
+                        std::cout << "    |IC|>0.1 占比: " << metrics.ratio_abs_gt_0_1 << std::endl;
+                    }
+                    if (metrics.ratio_abs_gt_0_5 > 0.1) {
+                        std::cout << "    |IC|>0.5 占比: " << metrics.ratio_abs_gt_0_5 << std::endl;
+                    }
+                    if (metrics.ratio_abs_gt_0_9 > 0.1) {
+                        std::cout << "    |IC|>0.9 占比: " << metrics.ratio_abs_gt_0_9 << std::endl;
+                    }
                 }
-                if (series.latest_factor) {
-                    std::cout << "    最近因子: "
-                              << format_date_ms(series.latest_factor->first)
-                              << " => " << series.latest_factor->second << std::endl;
-                }
-                print_table_preview(series);
             }
             std::cout << std::endl;
-        }
-    }
-
-    /**
-     * @brief 辅助函数：仅打印前 3 条 + 最后一条，避免大量时间列刷屏。
-     */
-    void print_table_preview(const TopicIcSeries& series) const {
-        const std::size_t preview_count = std::min<std::size_t>(3, series.samples.size());
-        if (preview_count == 0) return;
-        std::cout << "  预览:" << std::endl;
-        for (std::size_t i = 0; i < preview_count; ++i) {
-            const auto& sample = series.samples[i];
-            std::cout << "    " << format_date_ms(sample.ts_ms)
-                      << " | 因子=" << sample.factor
-                      << " | forward=" << sample.forward << std::endl;
-        }
-        if (series.samples.size() > preview_count) {
-            const auto& last = series.samples.back();
-            std::cout << "    ...\n"
-                      << "    " << format_date_ms(last.ts_ms)
-                      << " | 因子=" << last.factor
-                      << " | forward=" << last.forward << std::endl;
         }
     }
 };
