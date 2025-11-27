@@ -9,31 +9,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # ========================
-# 路径重定位：third_party / RollWinOp 必须位于仓库外部
-# ========================
-set(FACTORLIB_THIRD_PARTY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
-if (NOT EXISTS "${FACTORLIB_THIRD_PARTY_DIR}")
-    message(FATAL_ERROR "third_party directory not found at ${FACTORLIB_THIRD_PARTY_DIR}.
-    请先将 third_party 整个目录移动到仓库外的 ../third_party。")
-endif()
-message(STATUS "Using third_party directory: ${FACTORLIB_THIRD_PARTY_DIR}")
-
-set(ROLLWINOP_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../RollWinOp)
-if (NOT EXISTS "${ROLLWINOP_ROOT}/include/math")
-    message(FATAL_ERROR "RollWinOp math headers not found at ${ROLLWINOP_ROOT}/include/math.
-    请先将 include/math 目录整体移动到 ../RollWinOp/include/math。")
-endif()
-set(FACTORLIB_ROLLWINOP_INCLUDE_DIR ${ROLLWINOP_ROOT}/include)
-set(FACTORLIB_MATH_HEADER_DIR ${ROLLWINOP_ROOT}/include/math)
-set(FACTORLIB_MATH_TESTS_SOURCE_DIR ${ROLLWINOP_ROOT}/tests/math_tests)
-message(STATUS "Using external RollWinOp includes: ${FACTORLIB_ROLLWINOP_INCLUDE_DIR}")
-
-# 继承 RollWinOp 的 INTERFACE 目标（仅使用头文件，不编译其测试）
-set(ROLLWINOP_BUILD_TESTS OFF CACHE BOOL "Disable RollWinOp tests when embedded" FORCE)
-set(ROLLWINOP_ENABLE_TRACE_DEBUG ${FACTORLIB_ENABLE_TRACE_DEBUG} CACHE BOOL "" FORCE)
-add_subdirectory(${ROLLWINOP_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/RollWinOp)
-
-# ========================
 # 选项
 # ========================
 option(FACTORLIB_BUILD_TESTS "Build tests" ON)
@@ -62,6 +37,46 @@ foreach(opt
 endforeach()
 
 message(STATUS "============================================")
+
+# ========================
+# 路径重定位：third_party / RollWinOp 必须位于仓库外部
+# ========================
+# 只在用户没有手动设置时，才按平台给默认值
+if (NOT DEFINED FACTORLIB_THIRD_PARTY_DIR)
+    if(UNIX AND NOT APPLE)
+        set(FACTORLIB_THIRD_PARTY_DIR "/mnt/disk5/per/envs/code/third_party")
+    else()
+        set(FACTORLIB_THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party")
+    endif()
+endif()
+
+if (NOT DEFINED ROLLWINOP_ROOT)
+    if(UNIX AND NOT APPLE)
+        set(ROLLWINOP_ROOT "/mnt/disk5/per/envs/code/RollWinOp")
+    else()
+        set(ROLLWINOP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../RollWinOp")
+    endif()
+endif()
+
+if (NOT EXISTS "${FACTORLIB_THIRD_PARTY_DIR}")
+    message(FATAL_ERROR "third_party directory not found at ${FACTORLIB_THIRD_PARTY_DIR}.
+    请先将 third_party 整个目录移动到仓库外的 ../third_party。")
+endif()
+message(STATUS "Using third_party directory: ${FACTORLIB_THIRD_PARTY_DIR}")
+
+if (NOT EXISTS "${ROLLWINOP_ROOT}/include/math")
+    message(FATAL_ERROR "RollWinOp math headers not found at ${ROLLWINOP_ROOT}/include/math.
+    请先将 include/math 目录整体移动到 ../RollWinOp/include/math。")
+endif()
+set(FACTORLIB_ROLLWINOP_INCLUDE_DIR ${ROLLWINOP_ROOT}/include)
+set(FACTORLIB_MATH_HEADER_DIR ${ROLLWINOP_ROOT}/include/math)
+set(FACTORLIB_MATH_TESTS_SOURCE_DIR ${ROLLWINOP_ROOT}/tests/math_tests)
+message(STATUS "Using external RollWinOp includes: ${FACTORLIB_ROLLWINOP_INCLUDE_DIR}")
+
+# 继承 RollWinOp 的 INTERFACE 目标（仅使用头文件，不编译其测试）
+set(ROLLWINOP_BUILD_TESTS OFF CACHE BOOL "Disable RollWinOp tests when embedded" FORCE)
+set(ROLLWINOP_ENABLE_TRACE_DEBUG ${FACTORLIB_ENABLE_TRACE_DEBUG} CACHE BOOL "" FORCE)
+add_subdirectory(${ROLLWINOP_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/RollWinOp)
 
 # ========================
 # 编译选项
