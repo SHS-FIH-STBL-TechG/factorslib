@@ -1,9 +1,9 @@
 // tests/stat_factors_tests/pca_angular_momentum_factor_test.cpp
 
 #include <gtest/gtest.h>
-#include "../../src/stat_factors/pca_angular_momentum_factor.h"
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "factors/stat/pca_angular_momentum_factor.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 using namespace factorlib;
 

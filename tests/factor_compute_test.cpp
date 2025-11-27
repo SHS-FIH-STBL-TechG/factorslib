@@ -6,7 +6,7 @@
 
 #include <gtest/gtest.h>
 #include "gtest_printer_zh.h"
-#include "utils/trace_helper.h"
+#include "instrumentation/trace_helper.h"
 #include <iostream>
 
 // 全局环境：在所有测试开始前初始化 Perfetto，结束后关闭

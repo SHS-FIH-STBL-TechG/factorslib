@@ -1,14 +1,14 @@
 // tests/stat_factors_tests/volume_multiscale_autocorr_factor_test.cpp
 
-#include "../../src/stat_factors/volume_multiscale_autocorr_factor.h"
+#include "factors/stat/volume_multiscale_autocorr_factor.h"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <string>
 #include <vector>
 
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 using namespace factorlib;
 

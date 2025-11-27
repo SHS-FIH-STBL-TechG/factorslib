@@ -130,7 +130,6 @@ endif()
 # ---------- 工程内公共头路径（全局可用） ----------
 set(FACTORLIB_PUBLIC_INCLUDE_DIRS
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 if (DEFINED FACTORLIB_ROLLWINOP_INCLUDE_DIR)
     list(APPEND FACTORLIB_PUBLIC_INCLUDE_DIRS ${FACTORLIB_ROLLWINOP_INCLUDE_DIR})
@@ -243,7 +242,7 @@ add_library(factorlib_utils
         src/utils/trace_helper.cpp
         src/tools/factor_ic_runtime.cpp
         ${FACTORLIB_MATH_INCREMENTAL_RANK_HEADER}
-        include/utils/config/feed_mode.h
+        include/config/feed_mode.h
         ${FACTORLIB_MATH_SLIDING_NORMAL_EQ_HEADER}
         tests/utils/NumCountSimulation.cpp
 )
@@ -267,23 +266,34 @@ target_link_libraries(factorlib_utils PUBLIC rollwinop)
 
 # ---------- 组件：基础因子库（现有因子 + 新因子） ----------
 add_library(factor_basic
-        src/basic_factors/tick_trans_orders.cpp
-        src/stat_factors/gaussian_copula_factor.cpp
-        src/stat_factors/granger_causality_factor.cpp
-        src/stat_factors/granger_causality_factor.h
-        src/stat_factors/granger_causality_factor.cpp
+        src/factors/basic/tick_trans_orders.cpp
+        src/factors/stat/gaussian_copula_factor.cpp
+        src/factors/stat/granger_causality_factor.cpp
         src/config/runtime_config.cpp
-        src/stat_factors/least_squares_info_gain_factor.cpp
-        src/stat_factors/probability_momentum_factor.cpp
-        src/stat_factors/wavelet_trend_energy_factor.cpp
-        src/stat_factors/memory_kernel_decay_factor.cpp
-        src/stat_factors/volume_multiscale_autocorr_factor.cpp
-        src/stat_factors/volume_mgf_factor.cpp
-        src/stat_factors/hawkes_intensity_factor.cpp
-        src/stat_factors/symbolic_transition_factor.cpp
-        src/stat_factors/pca_structure_stability_factor.cpp
-        src/stat_factors/pca_angular_momentum_factor.cpp
+        src/factors/stat/least_squares_info_gain_factor.cpp
+        src/factors/stat/probability_momentum_factor.cpp
+        src/factors/stat/wavelet_trend_energy_factor.cpp
+        src/factors/stat/memory_kernel_decay_factor.cpp
+        src/factors/stat/volume_multiscale_autocorr_factor.cpp
+        src/factors/stat/volume_mgf_factor.cpp
+        src/factors/stat/hawkes_intensity_factor.cpp
+        src/factors/stat/symbolic_transition_factor.cpp
+        src/factors/stat/pca_structure_stability_factor.cpp
+        src/factors/stat/pca_angular_momentum_factor.cpp
         src/factor_factory.cpp
+        include/factors/stat/gaussian_copula_factor.h
+        include/factors/stat/granger_causality_factor.h
+        include/factors/stat/least_squares_info_gain_factor.h
+        include/factors/stat/probability_momentum_factor.h
+        include/factors/stat/wavelet_trend_energy_factor.h
+        include/factors/stat/memory_kernel_decay_factor.h
+        include/factors/stat/volume_multiscale_autocorr_factor.h
+        include/factors/stat/volume_mgf_factor.h
+        include/factors/stat/hawkes_intensity_factor.h
+        include/factors/stat/symbolic_transition_factor.h
+        include/factors/stat/pca_structure_stability_factor.h
+        include/factors/stat/pca_angular_momentum_factor.h
+        include/factors/basic/tick_trans_orders.h
 )
 
 target_link_libraries(factor_basic PUBLIC factorlib_utils)

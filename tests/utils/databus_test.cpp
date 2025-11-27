@@ -5,8 +5,8 @@
 #include <chrono>
 #include <thread>
 
-#include "utils/databus.h"
-#include "utils/scope_key.h"
+#include "core/databus.h"
+#include "core/scope_key.h"
 
 using namespace factorlib;
 

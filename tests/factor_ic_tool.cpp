@@ -29,13 +29,13 @@
 #include <limits>
 
 #include "bridge/ingress.h"
-#include "stat_factors/memory_kernel_decay_factor.h"
-#include "stat_factors/pca_angular_momentum_factor.h"
-#include "stat_factors/pca_structure_stability_factor.h"
-#include "utils/databus.h"
-#include "utils/scope_key.h"
-#include "utils/types.h"
-#include "utils/trace_helper.h"
+#include "factors/stat/memory_kernel_decay_factor.h"
+#include "factors/stat/pca_angular_momentum_factor.h"
+#include "factors/stat/pca_structure_stability_factor.h"
+#include "core/databus.h"
+#include "core/scope_key.h"
+#include "core/types.h"
+#include "instrumentation/trace_helper.h"
 #include "tools/factor_ic_runtime.h"
 
 namespace factorlib::tools {

@@ -15,8 +15,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "utils/databus.h"
-#include "stat_factors/memory_kernel_decay_factor.h"
+#include "core/databus.h"
+#include "factors/stat/memory_kernel_decay_factor.h"
 
 namespace factorlib::tools {
 

@@ -1,14 +1,14 @@
 // tests/stat_factors_tests/memory_kernel_decay_factor_test.cpp
 
-#include "../../src/stat_factors/memory_kernel_decay_factor.h"
+#include "factors/stat/memory_kernel_decay_factor.h"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <string>
 #include <vector>
 
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 using namespace factorlib;
 

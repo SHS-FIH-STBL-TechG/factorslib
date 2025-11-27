@@ -4,8 +4,8 @@
 #include <memory>
 #include <string>
 #include "bridge/ingress.h"
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 namespace factorlib {
     class IFactor; // 因子接口

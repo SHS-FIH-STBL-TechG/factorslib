@@ -1,11 +1,11 @@
 // tests/stat_factors_tests/least_squares_info_gain_factor_test.cpp
 
-#include "../../src/stat_factors/least_squares_info_gain_factor.h"
+#include "factors/stat/least_squares_info_gain_factor.h"
 
 #include <gtest/gtest.h>
 
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 using namespace factorlib;
 

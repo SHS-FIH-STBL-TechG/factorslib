@@ -5,8 +5,8 @@
 #include <string>
 #include <vector>
 
-#include "utils/types.h"
-#include "utils/scope_key.h"
+#include "core/types.h"
+#include "core/scope_key.h"
 
 namespace factorlib::tools {
 

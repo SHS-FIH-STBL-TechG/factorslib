@@ -1,6 +1,6 @@
 // include/utils/nms_bucket_aggregator.h
 #pragma once
-#include "utils/types.h"
+#include "core/types.h"
 #include "utils/trading_time.h"
 
 namespace factorlib {

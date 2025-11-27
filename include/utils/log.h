@@ -1,4 +1,4 @@
-// include/utils/log.h (优化版本，支持编译期裁剪 TRACE/DEBUG)
+// include/utils/log.h
 #pragma once
 /**
  * Simple logging facade for factorlib.

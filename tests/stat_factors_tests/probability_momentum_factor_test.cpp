@@ -1,4 +1,4 @@
-#include "../../src/stat_factors/probability_momentum_factor.h"
+#include "factors/stat/probability_momentum_factor.h"
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -7,8 +7,8 @@
 #include <string>
 #include <algorithm>
 
-#include "utils/databus.h"
-#include "../../src/config/runtime_config.h"
+#include "core/databus.h"
+#include "config/runtime_config.h"
 #include "math/distributions.h"
 
 using namespace factorlib;

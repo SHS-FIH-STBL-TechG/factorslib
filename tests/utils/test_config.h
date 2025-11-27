@@ -4,7 +4,7 @@
 #include <vector>
 #include <cstdint>
 
-#include "utils/types.h"
+#include "core/types.h"
 
 namespace testcfg {
 

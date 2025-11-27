@@ -1,9 +1,9 @@
 // src/factor_factory.cpp
-#include "factor_factory.h"
+#include "core/factor_factory.h"
 
-#include "ifactor.h"
-#include "basic_factors/tick_trans_orders.h"
-#include "stat_factors/granger_causality_factor.h"
+#include "core/ifactor.h"
+#include "factors/basic/tick_trans_orders.h"
+#include "factors/stat/granger_causality_factor.h"
 
 namespace factorlib {
 

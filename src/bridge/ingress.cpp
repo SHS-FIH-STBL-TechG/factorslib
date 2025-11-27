@@ -1,9 +1,9 @@
 // src/bridge/ingress.cpp
 #include "bridge/ingress.h"
 #include "utils/data_adapter.h"
-#include "utils/trace_helper.h"
-#include "ifactor.h"
-#include "utils/types.h"
+#include "instrumentation/trace_helper.h"
+#include "core/ifactor.h"
+#include "core/types.h"
 #include "tools/factor_ic_runtime.h"
 
 #include <algorithm>

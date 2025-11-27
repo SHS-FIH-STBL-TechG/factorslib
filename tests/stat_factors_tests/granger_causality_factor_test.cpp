@@ -1,13 +1,13 @@
 // tests/granger_causality_factor_test.cpp
-#include "../../src/stat_factors/granger_causality_factor.h"
+#include "factors/stat/granger_causality_factor.h"
 #include <chrono>
 #include <cmath>
 #include <string>
 #include <vector>
 #include <Eigen/Dense>
 #include <gtest/gtest.h>
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/types.h"
 #include "../utils/test_config.h"
 
 using namespace factorlib;

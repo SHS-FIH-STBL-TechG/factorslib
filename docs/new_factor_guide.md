@@ -8,25 +8,25 @@
 
 ## 0. 目录与关键约定
 
-- 因子接口：`factors_lib/include/ifactor.h`（定义 `on_quote/on_transaction/on_entrust/on_bar/force_flush` 等）  
-- 公共类型：`factors_lib/include/utils/utils.h`（`QuoteDepth/Transaction/Entrust/Bar` 等）  
+- 因子接口：`factors_lib/include/factorlib/core/ifactor.h`（定义 `on_quote/on_transaction/on_entrust/on_bar/force_flush` 等）  
+- 公共类型：`factors_lib/include/factorlib/core/types.h`（`QuoteDepth/Transaction/Entrust/Bar` 等）  
 - 桥接入口：`factors_lib/include/factorlib/bridge/ingress.h`（`ingest_snapshot/ingest_ont/ingest_kline/set_factors`）  
-- 数据适配：`factors_lib/include/utils/data_adapter.h`、`factors_lib/src/utils/data_adapter.cpp`（demo 类型 → 统一类型）  
+- 数据适配：`factors_lib/include/factorlib/utils/data_adapter.h`、`factors_lib/src/utils/data_adapter.cpp`（demo 类型 → 统一类型）  
 - 推荐放置新因子：  
-  - 头文件：`factors_lib/include/basic_factors/my_alpha_momentum.h`  
-  - 源文件：`factors_lib/src/basic_factors/my_alpha_momentum.cpp`  
+  - 头文件：`factors_lib/include/factorlib/factors/basic/my_alpha_momentum.h`  
+  - 源文件：`factors_lib/src/factors/basic/my_alpha_momentum.cpp`  
 - 发布主题（DataBus）示例：`alpha/momentum/*`（遵循你现有命名规范即可）
 
 ---
 
 ## 1. 新增因子代码
 
-### 1.1 头文件：`factors_lib/include/basic_factors/my_alpha_momentum.h`
+### 1.1 头文件：`factors_lib/include/factorlib/factors/basic/my_alpha_momentum.h`
 
 ```cpp
 #pragma once
-#include "ifactor.h"
-#include "utils/utils.h"
+#include "factorlib/core/ifactor.h"
+#include "factorlib/core/types.h"
 #include <deque>
 #include <string>
 
@@ -66,11 +66,12 @@ private:
 };
 ```
 
-### 1.2 源文件：`factors_lib/src/basic_factors/my_alpha_momentum.cpp`
+### 1.2 源文件：`factors_lib/src/factors/basic/my_alpha_momentum.cpp`
 
 ```cpp
-#include "basic_factors/my_alpha_momentum.h"
-#include "utils/utils.h"       // DataBus 发布工具等
+#include "factorlib/factors/basic/my_alpha_momentum.h"
+#include "factorlib/core/types.h"
+#include "factorlib/core/databus.h"       // DataBus 发布工具等
 #include <numeric>
 #include <cmath>
 
@@ -125,7 +126,7 @@ bool MyAlphaMomentum::force_flush() {
 ```cmake
 # 示例：把新因子源加入 factor_basic 目标
 target_sources(factor_basic PRIVATE
-    src/basic_factors/my_alpha_momentum.cpp
+    src/factors/basic/my_alpha_momentum.cpp
 )
 ```
 
@@ -137,8 +138,8 @@ target_sources(factor_basic PRIVATE
 
 ```cpp
 #include <gtest/gtest.h>
-#include "basic_factors/my_alpha_momentum.h"
-#include "utils/utils.h"
+#include "factorlib/factors/basic/my_alpha_momentum.h"
+#include "factorlib/core/types.h"
 
 TEST(MyAlphaMomentumTest, BasicMomentum) {
     MyAlphaMomentum f(/*instrument_filter=*/"600000.SH");
@@ -169,8 +170,8 @@ TEST(MyAlphaMomentumTest, BasicMomentum) {
 
 ```cpp
 #include "factorlib/bridge/ingress.h"
-#include "ifactor.h"
-#include "basic_factors/my_alpha_momentum.h"  // ← 新增
+#include "factorlib/core/ifactor.h"
+#include "factorlib/factors/basic/my_alpha_momentum.h"  // ← 新增
 
 // 初始化时：
 std::vector<std::shared_ptr<factorlib::IFactor>> fs;
@@ -206,8 +207,8 @@ void AppDemo::RecvKLineData(const std::vector<BasicandEnhanceKLine>& v) {
 ## 6. 最小上线清单（Checklist）
 
 - [ ] 新增文件：  
-  - [ ] `include/basic_factors/my_alpha_momentum.h`  
-  - [ ] `src/basic_factors/my_alpha_momentum.cpp`  
+  - [ ] `include/factorlib/factors/basic/my_alpha_momentum.h`  
+  - [ ] `src/factors/basic/my_alpha_momentum.cpp`  
   - [ ] `tests/my_alpha_momentum_test.cpp`（建议）  
 - [ ] CMake：`my_alpha_momentum.cpp` 已加入目标（或目录自动收集）。  
 - [ ] demo：初始化已 `emplace_back(std::make_shared<MyAlphaMomentum>(...))`。  

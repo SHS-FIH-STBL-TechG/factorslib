@@ -11,11 +11,11 @@
 #include <string>
 #include <vector>
 
-#include "../../src/stat_factors/granger_causality_factor.h"
+#include "factors/stat/granger_causality_factor.h"
 #include "math/distributions.h"
-#include "utils/databus.h"
-#include "utils/scope_key.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/scope_key.h"
+#include "core/types.h"
 #include "math/sliding_normal_eq.h"
 
 using namespace factorlib;

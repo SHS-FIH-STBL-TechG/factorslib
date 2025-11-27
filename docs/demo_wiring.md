@@ -6,7 +6,7 @@
 1. 在 `AppDemo.cpp` 顶部引入：
 ```cpp
 #include "factorlib/bridge/ingress.h"
-#include "ifactor.h"
+#include "factorlib/core/ifactor.h"
 ```
 2. 在初始化处注册你的因子（示例两条）：
 ```cpp

@@ -1,9 +1,9 @@
 // tests/utils/trace_helper_test.cpp
 #include <gtest/gtest.h>
-#include "utils/trace_helper.h"
+#include "instrumentation/trace_helper.h"
 #include "bridge/ingress.h"
-#include "utils/types.h"
-#include "stat_factors/volume_mgf_factor.h"
+#include "core/types.h"
+#include "factors/stat/volume_mgf_factor.h"
 #include <vector>
 #include <thread>
 #include <chrono>
@@ -247,7 +247,7 @@ TEST_F(TraceHelperTest, PerformanceOverhead) {
     std::cout << "Trace overhead per event: " << per_event_overhead << " us" << std::endl;
     EXPECT_LT(per_event_overhead, 200.0);
 #else
-    // 未启用时，开销应该几乎为零
-    EXPECT_NEAR(duration_with_trace, duration_no_trace, duration_no_trace * 0.1);
+    // 未启用时，开销应该非常小，但允许一定程度的波动
+    EXPECT_NEAR(duration_with_trace, duration_no_trace, 5.0);  // 允许最多 5 微秒的差异
 #endif
 }

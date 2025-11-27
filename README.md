@@ -26,45 +26,48 @@ factors_lib/
 │   ├── demo_wiring.md
 │   └── new_factor_guide.md
 ├── include/                    # 公共头文件
-│   ├── factorlib/bridge/
-│   │   └── ingress.h           # 数据入口桥接接口
-│   ├── ifactor.h               # 因子基类接口定义（IFactor / BaseFactor）
-│   └── utils/                  # 工具类头文件
-│       ├── config/
-│       │   └── feed_mode.h     # 数据喂入模式配置
-│       ├── data_adapter.h      # 多源数据格式转换
-│       ├── databus.h           # 数据总线通信系统
-│       ├── log.h               # 分级日志系统
-│       ├── math/               # 数学工具库
-│       │   ├── distributions.h     # 概率分布计算
-│       │   ├── incremental_rank.h  # 增量排名算法
-│       │   ├── linear_algebra.h    # 线性代数工具
-│       │   ├── numeric_utils.h     # 数值工具
-│       │   ├── sliding_normal_eq.h # 增量法正则方程
-│       │   └── statistics.h        # 统计计算
-│       ├── nms_bucket_aggregator.h # 时间桶聚合器
-│       ├── trading_time.h      # 交易时间处理
-│       └── types.h             # 统一数据类型定义（QuoteDepth / Transaction / Entrust / CombinedTick / Bar 等）
+│   └──               # 对外暴露的完整 API
+│       ├── core/               # 核心接口与基础类型
+│       │   ├── factor_factory.h
+│       │   ├── ifactor.h
+│       │   ├── databus.h
+│       │   ├── scope_key.h
+│       │   └── types.h
+│       ├── bridge/ingress.h    # 数据入口桥接接口
+│       ├── config/             # 运行期配置
+│       │   ├── runtime_config.h
+│       │   ├── config_utils.h
+│       │   └── feed_mode.h
+│       ├── utils/              # 业务无关的通用工具
+│       │   ├── data_adapter.h
+│       │   ├── log.h
+│       │   ├── nms_bucket_aggregator.h
+│       │   ├── trading_time.h
+│       │   └── nn/ann_index.h
+│       ├── instrumentation/    # 性能观测相关
+│       │   └── trace_helper.h
+│       ├── tools/
+│       │   └── factor_ic_runtime.h
+│       └── factors/            # 因子头文件
+│           ├── basic/tick_trans_orders.h
+│           └── stat/*.h
 ├── src/                        # 源文件实现
-│   ├── basic_factors/          # 基础因子实现
-│   │   ├── tick_trans_orders.cpp
-│   │   └── tick_trans_orders.h
+│   ├── factors/                # 因子实现
+│   │   ├── basic/tick_trans_orders.cpp
+│   │   └── stat/*.cpp
 │   ├── bridge/
 │   │   └── ingress.cpp         # 数据入口实现
 │   ├── config/                 # 运行时配置
 │   │   ├── runtime_config.cpp
-│   │   ├── runtime_config.h
 │   │   └── runtime_config.ini
-│   ├── stat_factors/           # 统计因子实现
-│   │   ├── gaussian_copula_factor.cpp
-│   │   ├── gaussian_copula_factor.h
-│   │   ├── granger_causality_factor.cpp
-│   │   └── granger_causality_factor.h
+│   ├── tools/                  # 运行工具
+│   │   └── factor_ic_runtime.cpp
 │   └── utils/                  # 工具类实现
 │       ├── data_adapter.cpp
 │       ├── log.cpp
 │       ├── nms_bucket_aggregator.cpp
-│       └── trading_time.cpp
+│       ├── trading_time.cpp
+│       └── trace_helper.cpp
 ├── tests/                      # 测试代码
 │   ├── basic_factors_tests/
 │   │   └── tick_trans_orders_test.cpp
@@ -100,7 +103,7 @@ factors_lib/
 
 **设计目标**：为所有因子提供统一的接口规范，确保代码的一致性和可维护性。
 
-**核心接口（与 `include/ifactor.h` 设计保持一致）**：
+**核心接口（与 `include/core/ifactor.h` 设计保持一致）**：
 ```cpp
 // IFactor：所有因子的抽象基类，定义了数据输入与刷新/元数据等接口
 class IFactor {
@@ -658,9 +661,9 @@ A: 默认已编译期移除了 TRACE/DEBUG。若仍多，可在运行时将级�
 > 说明：示例延续你当前的 include 路径风格；日志统一用 `LOG_*` 宏。
 
 ```cpp
-#include "factors_lib/include/ifactor.h"          // 因子接口/基类
-#include "factors_lib/include/utils/databus.h"    // 数据总线
-#include "factors_lib/include/utils/log.h"        // 日志宏
+#include "factors_lib/include/core/ifactor.h"          // 因子接口/基类
+#include "factors_lib/include/core/databus.h"          // 数据总线
+#include "factors_lib/include/utils/log.h"             // 日志宏
 
 int main() {
     // —— 1) 打一条 INFO 级日志（默认不会编译 TRACE/DEBUG） ——
@@ -741,8 +744,8 @@ int main() {
 **头文件** (`my_custom_factor.h`)：
 ```cpp
 #pragma once
-#include "ifactor.h"
-#include "utils/databus.h"
+#include "core/ifactor.h"
+#include "core/databus.h"
 #include "utils/nms_bucket_aggregator.h"
 
 namespace factorlib {

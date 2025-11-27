@@ -2,9 +2,9 @@
 #include <vector>
 
 #include "tools/factor_ic_runtime.h"
-#include "stat_factors/memory_kernel_decay_factor.h"
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "factors/stat/memory_kernel_decay_factor.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 using namespace factorlib;
 

@@ -1,9 +1,9 @@
-// include/factorlib/bridge/ingress.h
+// include/bridge/ingress.h
 #pragma once
 #include <vector>
 #include <cstdint>
 #include <memory>
-#include "ifactor.h"
+#include "core/ifactor.h"
 
 /**
  * @file ingress.h

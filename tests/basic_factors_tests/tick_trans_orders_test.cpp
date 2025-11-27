@@ -16,9 +16,9 @@
 #include <iostream>
 #include <algorithm>
 
-#include "basic_factors/tick_trans_orders.h"
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "factors/basic/tick_trans_orders.h"
+#include "core/databus.h"
+#include "core/types.h"
 #include "../utils/test_config.h"
 #include "../utils/NumCountSimulation.h"
 

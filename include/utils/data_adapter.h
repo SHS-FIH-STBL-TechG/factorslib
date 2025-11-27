@@ -2,7 +2,7 @@
 #pragma once
 #include <string>
 #include "utils/trading_time.h"
-#include "utils/types.h"
+#include "core/types.h"
 
 struct std_SnapshotStockSH;
 struct std_SnapshotStockSZ;

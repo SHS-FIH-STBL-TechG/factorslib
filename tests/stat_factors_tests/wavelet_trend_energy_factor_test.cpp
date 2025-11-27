@@ -1,14 +1,14 @@
 // tests/stat_factors_tests/wavelet_trend_energy_factor_test.cpp
 
-#include "../../src/stat_factors/wavelet_trend_energy_factor.h"
+#include "factors/stat/wavelet_trend_energy_factor.h"
 
 #include <gtest/gtest.h>
 #include <cmath>
 #include <string>
 #include <vector>
 
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/types.h"
 #include "../utils/test_config.h"   // testcfg::read_bars_from_cfg
 
 using namespace factorlib;

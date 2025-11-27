@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
-#include "../../src/stat_factors/symbolic_transition_factor.h"
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "factors/stat/symbolic_transition_factor.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 using namespace factorlib;
 

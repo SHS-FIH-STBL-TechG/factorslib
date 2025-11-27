@@ -1,6 +1,6 @@
 // tests/stat_factors_tests/volume_mgf_factor_test.cpp
 
-#include "../../src/stat_factors/volume_mgf_factor.h"
+#include "factors/stat/volume_mgf_factor.h"
 
 #include <gtest/gtest.h>
 #include <cmath>
@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "utils/databus.h"
-#include "utils/types.h"
+#include "core/databus.h"
+#include "core/types.h"
 
 using namespace factorlib;
 
