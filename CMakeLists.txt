@@ -8,6 +8,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+set(FACTORLIB_ON_WINDOWS_MINGW OFF)
+if (WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(FACTORLIB_ON_WINDOWS_MINGW ON)
+endif()
+
 # ========================
 # 选项
 # ========================
@@ -18,7 +23,21 @@ option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
 option(FACTORLIB_ENABLE_IC_RUNTIME "Enable IC evaluation runtime" ON)
-option(FACTORLIB_ENABLE_PERFETTO "Enable Perfetto performance tracing" ON)
+set(_factorlib_perfetto_default ON)
+if (FACTORLIB_ON_WINDOWS_MINGW)
+    set(_factorlib_perfetto_default OFF)
+endif()
+option(FACTORLIB_ENABLE_PERFETTO "Enable Perfetto performance tracing" ${_factorlib_perfetto_default})
+set(_factorlib_branch_coverage_default OFF)
+if (FACTORLIB_ON_WINDOWS_MINGW)
+    set(_factorlib_branch_coverage_default ON)
+endif()
+option(FACTORLIB_ENABLE_BRANCH_COVERAGE "Collect branch coverage via gcov after running tests" ${_factorlib_branch_coverage_default})
+# 运行在 Windows + MinGW 时，强制关闭 Perfetto（SDK 不支持该组合）
+if (FACTORLIB_ON_WINDOWS_MINGW AND FACTORLIB_ENABLE_PERFETTO)
+    message(WARNING "Disabling Perfetto tracing: Perfetto is not supported on Windows + MinGW toolchains.")
+    set(FACTORLIB_ENABLE_PERFETTO OFF CACHE BOOL "Enable Perfetto performance tracing" FORCE)
+endif()
 # 打印所有相关选项
 message(STATUS "========== factorlib CMake options ==========")
 
@@ -32,6 +51,7 @@ foreach(opt
         FACTORLIB_ENABLE_PARALLEL_INGRESS
         FACTORLIB_ENABLE_IC_RUNTIME
         FACTORLIB_ENABLE_PERFETTO
+        FACTORLIB_ENABLE_BRANCH_COVERAGE
 )
     message(STATUS "  ${opt} = ${${opt}}")
 endforeach()
@@ -91,6 +111,19 @@ if (MSVC)
     )
 else()
     add_compile_options(-Wall -Wextra -O2)
+endif()
+
+if (FACTORLIB_ENABLE_BRANCH_COVERAGE)
+    if (MSVC)
+        message(FATAL_ERROR "FACTORLIB_ENABLE_BRANCH_COVERAGE requires a GCC/Clang-like toolchain (not MSVC).")
+    endif()
+    add_compile_options(--coverage)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} --coverage")
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} --coverage")
+    find_program(FACTORLIB_GCOV_PATH NAMES gcov gcov.exe)
+    if (NOT FACTORLIB_GCOV_PATH)
+        message(FATAL_ERROR "gcov not found but FACTORLIB_ENABLE_BRANCH_COVERAGE is ON.")
+    endif()
 endif()
 
 # ========================
@@ -347,4 +380,17 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/factor_ic_tool.cpp
     )
     target_link_libraries(factor_ic_tool PRIVATE factor_basic factorlib_utils)
+
+    if (FACTORLIB_ENABLE_BRANCH_COVERAGE)
+        set(_factorlib_branch_cov_deps run_all stat_factors_tests)
+        set(FACTORLIB_BRANCH_COVERAGE_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunBranchCoverage.cmake)
+        set(FACTORLIB_BRANCH_COVERAGE_REPORT ${CMAKE_BINARY_DIR}/branch_coverage.txt)
+        add_test(NAME branch_coverage
+                COMMAND ${CMAKE_COMMAND}
+                -DGCOV_PATH=${FACTORLIB_GCOV_PATH}
+                -DBINARY_DIR=${CMAKE_BINARY_DIR}
+                -DREPORT_PATH=${FACTORLIB_BRANCH_COVERAGE_REPORT}
+                -P ${FACTORLIB_BRANCH_COVERAGE_SCRIPT})
+        set_tests_properties(branch_coverage PROPERTIES DEPENDS "${_factorlib_branch_cov_deps}")
+    endif()
 endif()

@@ -26,31 +26,30 @@ factors_lib/
 │   ├── demo_wiring.md
 │   └── new_factor_guide.md
 ├── include/                    # 公共头文件
-│   └──               # 对外暴露的完整 API
-│       ├── core/               # 核心接口与基础类型
-│       │   ├── factor_factory.h
-│       │   ├── ifactor.h
-│       │   ├── databus.h
-│       │   ├── scope_key.h
-│       │   └── types.h
-│       ├── bridge/ingress.h    # 数据入口桥接接口
-│       ├── config/             # 运行期配置
-│       │   ├── runtime_config.h
-│       │   ├── config_utils.h
-│       │   └── feed_mode.h
-│       ├── utils/              # 业务无关的通用工具
-│       │   ├── data_adapter.h
-│       │   ├── log.h
-│       │   ├── nms_bucket_aggregator.h
-│       │   ├── trading_time.h
-│       │   └── nn/ann_index.h
-│       ├── instrumentation/    # 性能观测相关
-│       │   └── trace_helper.h
-│       ├── tools/
-│       │   └── factor_ic_runtime.h
-│       └── factors/            # 因子头文件
-│           ├── basic/tick_trans_orders.h
-│           └── stat/*.h
+│   ├── core/               # 核心接口与基础类型
+│   │   ├── factor_factory.h
+│   │   ├── ifactor.h
+│   │   ├── databus.h
+│   │   ├── scope_key.h
+│   │   └── types.h
+│   ├── bridge/ingress.h    # 数据入口桥接接口
+│   ├── config/             # 运行期配置
+│   │   ├── runtime_config.h
+│   │   ├── config_utils.h
+│   │   └── feed_mode.h
+│   ├── utils/              # 业务无关的通用工具
+│   │   ├── data_adapter.h
+│   │   ├── log.h
+│   │   ├── nms_bucket_aggregator.h
+│   │   ├── trading_time.h
+│   │   └── nn/ann_index.h
+│   ├── instrumentation/    # 性能观测相关
+│   │   └── trace_helper.h
+│   ├── tools/
+│   │   └── factor_ic_runtime.h
+│   └── factors/            # 因子头文件
+│       ├── basic/tick_trans_orders.h
+│       └── stat/*.h
 ├── src/                        # 源文件实现
 │   ├── factors/                # 因子实现
 │   │   ├── basic/tick_trans_orders.cpp
@@ -74,26 +73,24 @@ factors_lib/
 │   ├── stat_factors_tests/
 │   │   ├── gaussian_copula_factor_test.cpp
 │   │   └── granger_causality_factor_test.cpp
-│   ├── integration/
-│   │   └── demo_min_e2e_test.cpp   # Demo 级 E2E 测试
 │   ├── utils/
 │   │   ├── data_gen.h              # 测试数据生成器
 │   │   ├── test_config.cpp
 │   │   ├── test_config.h
-│   │   └── test_config.ini
+│   │   ├── test_config.ini
+│   │   └── NumCountSimulation.*    # 模拟输入工具
+│   ├── tools/
+│   │   └── factor_ic_runtime_test.cpp
 │   ├── data/                       # 测试用样例数据
-│   │   ├── bars_minute_csv.csv
-│   │   ├── snapshot_quotes_csv.csv
-│   │   └── transactions_tick_csv.csv
+│   │   └── 000001.SH-行情统计-20251117.csv 等 CSV（多支标的，供单测读取）
 │   ├── factor_compute_test.cpp
+│   ├── factor_ic_tool.cpp
 │   ├── gtest_printer_zh.h
 │   └── test_wait.cpp
-└── third_party/               # 第三方依赖（优先使用仓库内版本）
-    ├── boost/                 # 通过 bcp 导出的最小 Boost 头（必须存在）
-    ├── eigen/                 # Eigen 线性代数库（头文件）
-    ├── googletest/            # GoogleTest 测试框架
-    └── spdlog/                # spdlog 日志库（可选）
+└── examples/                  # Demo 级示例（如回放脚本，按需扩展）
 ```
+
+> ℹ️ 第三方依赖会被放在仓库外部，通过 `FACTORLIB_THIRD_PARTY_DIR` 指定路径（默认 `../third_party`）。请确保该目录下存在 Boost/Eigen/Googletest/spdlog 等所需组件后再运行 CMake。
 
 ---
 
@@ -454,9 +451,10 @@ public:
 - **操作系统**：Linux / Windows / macOS
 - **编译器**：C++17（GCC 7+ / Clang 5+ / MSVC 2019+）
 - **构建工具**：CMake 3.15+（当前 CMakeLists.txt 要求）
-- **第三方**：
-    - 必需：`third_party/boost`（通过 bcp 导出的最小 Boost 头文件）
-    - 推荐：`third_party/eigen`（线性代数）、`third_party/googletest`（若开启测试）、`third_party/spdlog`（更好的日志输出）
+- **第三方目录 (`FACTORLIB_THIRD_PARTY_DIR`)**：
+    - 默认指向仓库外的 `../third_party`，可在 CMake 命令行手动覆盖
+    - 必需：`${FACTORLIB_THIRD_PARTY_DIR}/boost`（通过 bcp 导出的最小 Boost 头文件）
+    - 推荐：`${FACTORLIB_THIRD_PARTY_DIR}/eigen`（线性代数）、`${FACTORLIB_THIRD_PARTY_DIR}/googletest`（若开启测试）、`${FACTORLIB_THIRD_PARTY_DIR}/spdlog`（更好的日志输出）
 
 ### 构建项目
 ```bash
@@ -511,7 +509,7 @@ target_link_libraries(demo PRIVATE factor_basic factorlib_utils)
 | `FACTORLIB_BUILD_TESTS`      | `ON`  | 是否启用测试相关目标的构建总开关 |
 | `FACTORLIB_BUILD_UNIT_TESTS` | `ON`  | 是否构建单元测试可执行文件 `run_tests`（仅在 `FACTORLIB_BUILD_TESTS=ON` 时生效） |
 | `FACTORLIB_WITH_DEMO_E2E`    | `OFF` | 是否构建 E2E 测试 `run_e2e`（依赖 demo_header；仅用于集成验证） |
-| `FACTORLIB_USE_THIRD_PARTY`  | `ON`  | **优先使用** `third_party/` 下的 Eigen / GTest / spdlog 等依赖 |
+| `FACTORLIB_USE_THIRD_PARTY`  | `ON`  | **优先使用** `FACTORLIB_THIRD_PARTY_DIR` 指向的 Eigen / GTest / spdlog 等依赖 |
 | `FACTORLIB_ENABLE_TRACE_DEBUG` | `OFF` | 是否**编译进** TRACE/DEBUG 日志（OFF 时会定义 `FACTORLIB_NO_DEBUG_TRACE=1` 以裁掉相关代码） |
 
 > **日志编译开关说明**
@@ -536,7 +534,7 @@ target_link_libraries(demo PRIVATE factor_basic factorlib_utils)
 
 - 使用统一日志宏：`LOG_TRACE/DEBUG/INFO/WARN/ERROR`（见 `include/utils/log.h`）。
 - 默认 **不编译** TRACE/DEBUG：`FACTORLIB_ENABLE_TRACE_DEBUG=OFF` → 对性能/体积零成本。
-- 存在 `third_party/spdlog` 时启用彩色控制台输出；否则回退到 `fprintf(stderr, ...)`。
+- 当 `FACTORLIB_THIRD_PARTY_DIR/spdlog` 可用时启用彩色控制台输出；否则回退到 `fprintf(stderr, ...)`。
 - 建议 Demo 输出指标：发布/订阅 QPS、丢弃计数、窗口滞后数。
 
 ---
