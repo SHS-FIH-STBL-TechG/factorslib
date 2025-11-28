@@ -1,9 +1,9 @@
 // tests/factor_ic_tool.cpp
 // ---------------------------------------------------------------------------
-// 以 MemoryKernelDecayFactor 为例的 IC 评估辅助：
+// 以 MemoryKernelDecayFactor 等价因子为例的 IC 评估辅助：
 //  1. 读取 tests/data 目录下的行情统计 CSV，每张表对应一个 code；
 //  2. 将 CSV 行转换成 factorlib::Bar，通过 bridge/ingress 走真实流程下发因子；
-//  3. 因子产出的 memory_kernel/decay 结果由 tools/factor_ic_runtime 在 DataBus 上监听；
+//  3. 因子产出的 memory_kernel/decay、WaveletTrendEnergy 等结果由 tools/factor_ic_runtime 在 DataBus 上监听；
 //  4. runtime 在收到下一期 Bar 时计算 forward return，形成 (因子, 下一期收益) 样本并输出 IC。
 // ---------------------------------------------------------------------------
 
@@ -32,6 +32,7 @@
 #include "factors/stat/memory_kernel_decay_factor.h"
 #include "factors/stat/pca_angular_momentum_factor.h"
 #include "factors/stat/pca_structure_stability_factor.h"
+#include "factors/stat/wavelet_trend_energy_factor.h"
 #include "core/databus.h"
 #include "core/scope_key.h"
 #include "core/types.h"
@@ -393,6 +394,7 @@ public:
         MemoryKernelDecayFactor::register_topics(topic_capacity_);
         PcaAngularMomentumFactor::register_topics(topic_capacity_);
         PcaStructureStabilityFactor::register_topics(topic_capacity_);
+        WaveletTrendEnergyFactor::register_topics(topic_capacity_);
 
         MemoryKernelConfig cfg;
         cfg.window_size = 64;
@@ -406,7 +408,13 @@ public:
         PcaStructureStabilityConfig stab_cfg;
         auto stab_factor = std::make_shared<PcaStructureStabilityFactor>(codes, stab_cfg);
 
-        bridge::set_factors({mem_factor, pca_factor, stab_factor});
+        WaveTrendConfig wave_cfg;
+        wave_cfg.window_size = 128;
+        wave_cfg.levels_J = 6;
+        wave_cfg.trend_start_j = 3;
+        auto wave_factor = std::make_shared<WaveletTrendEnergyFactor>(codes, wave_cfg);
+
+        bridge::set_factors({mem_factor, pca_factor, stab_factor, wave_factor});
 
         factorlib::tools::ic_runtime_clear();
 
