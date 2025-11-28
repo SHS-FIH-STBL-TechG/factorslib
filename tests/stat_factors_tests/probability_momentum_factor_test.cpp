@@ -176,7 +176,7 @@ protected:
         double sigma = std::sqrt(static_cast<double>(var));
         if (!(sigma > 0.0)) sigma = min_sigma_;
         double z = static_cast<double>(mu) / sigma;
-        return factorlib::math::Distributions<>::normal_cdf(z);
+        return math::Distributions<>::normal_cdf(z);
     }
 
     std::unique_ptr<ProbabilityMomentumFactor> factor_;

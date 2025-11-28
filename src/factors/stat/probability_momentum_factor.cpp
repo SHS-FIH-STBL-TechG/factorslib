@@ -49,8 +49,8 @@ using factorlib::config::RC;
 
 namespace factorlib {
 
-using factorlib::math::NumericUtils;
-using factorlib::math::Distributions;
+using math::NumericUtils;
+using math::Distributions;
 
 // =====================[ 构造 & 配置 ]=====================
 
