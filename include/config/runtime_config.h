@@ -11,7 +11,7 @@ namespace factorlib::config {
         static const RuntimeConfig& instance();
 
         // 读取字符串或带默认值的类型化访问
-        const std::string& get(const std::string& key, const std::string& def) const;
+        std::string get(const std::string& key, const std::string& def) const;
         int     geti (const std::string& key, int def) const;
         int64_t geti64(const std::string& key, int64_t def) const;
         double  getd (const std::string& key, double def) const;

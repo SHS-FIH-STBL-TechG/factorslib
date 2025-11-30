@@ -40,7 +40,7 @@ const RuntimeConfig& RuntimeConfig::instance() {
     return inst;
 }
 
-const std::string& RuntimeConfig::get(const std::string& key, const std::string& def) const {
+std::string RuntimeConfig::get(const std::string& key, const std::string& def) const {
     auto it = kv_.find(key);
     return (it==kv_.end()) ? def : it->second;
 }

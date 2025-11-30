@@ -2,6 +2,7 @@
 #pragma once
 #include "core/types.h"
 #include "utils/trading_time.h"
+#include <deque>
 
 namespace factorlib {
 
@@ -37,14 +38,19 @@ namespace factorlib {
         bool force_flush(BucketOutputs& out);
 
         /**
-         * @brief 确保当前时间桶已建立；若跨越，则产出旧桶
+         * @brief 确保当前时间桶已建立；若跨越，则将旧桶排入待输出队列
+         * @return 是否有新的桶进入待输出队列
          */
-        bool ensure_bucket(int64_t ts_ms, BucketOutputs& out);
+        bool ensure_bucket(int64_t ts_ms);
+
+        /// @brief 弹出一个准备好的桶（若存在）
+        bool pop_ready(BucketOutputs& out);
 
     private:
         int64_t _bucket_ms{1000};
         bool _has_bucket{false};
         BucketOutputs _cur{};
+        std::deque<BucketOutputs> _ready{};
 
         // 用于增量计算的上一次行情记忆
         bool _has_last_quote{false};

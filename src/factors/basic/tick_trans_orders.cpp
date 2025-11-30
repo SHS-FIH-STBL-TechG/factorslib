@@ -141,16 +141,12 @@ namespace factorlib {
      *  - 具体行为由 NmsBucketAggregator 内部定义，这里只负责调用和转发结果。
      */
     void TickTransOrders::maybe_flush_and_publish(const std::string& code, int64_t now_ms) {
+        _agg[code].ensure_bucket(now_ms);
         BucketOutputs out;
-
-        // 如果当前时间已经进入新的桶，ensure_bucket 会返回 true
-        if (_agg[code].ensure_bucket(now_ms, out)) {
+        while (_agg[code].pop_ready(out)) {
             publish_bucket(code, out);
-            return;
         }
-
-        // 否则检查是否有过期桶需要 flush
-        if (_agg[code].flush_if_crossed(now_ms, out)) {
+        while (_agg[code].flush_if_crossed(now_ms, out)) {
             publish_bucket(code, out);
         }
     }
@@ -298,6 +294,7 @@ namespace factorlib {
 
             // 将成交数据加入桶聚合器
             _agg[t.instrument_id].on_transaction(t);
+            maybe_flush_and_publish(t.instrument_id, t.data_time_ms);
 
         } else if (x.kind == CombinedKind::Order) {
             // 处理委托逻辑（新增和撤单都归为 Order 统一处理）
@@ -322,6 +319,7 @@ namespace factorlib {
 
             // 将委托数据加入桶聚合器
             _agg[e.instrument_id].on_entrust(e);
+            maybe_flush_and_publish(e.instrument_id, e.data_time_ms);
         } else {
             // 如果是 Empty 类型，表示不处理
         }

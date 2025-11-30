@@ -52,7 +52,7 @@ inline std::vector<int> load_window_sizes(const std::string& section,
     int single = cfg.geti(section + ".window_size", fallback_window);
     if (single <= 0) single = fallback_window;
     static const std::string empty_string;
-    const auto& multi_raw = cfg.get(section + ".window_sizes", empty_string);
+    auto multi_raw = cfg.get(section + ".window_sizes", empty_string);
     auto list = parse_int_list(multi_raw);
     if (list.empty()) list.push_back(single);
     return list;
@@ -116,7 +116,7 @@ inline bool parse_frequency_token(const std::string& token, int64_t& out_ms) {
 
 inline std::vector<int64_t> load_time_frequencies(const std::string& section) {
     static const std::string empty_string;
-    const auto& raw = RuntimeConfig::instance().get(section + ".time_frequencies", empty_string);
+    auto raw = RuntimeConfig::instance().get(section + ".time_frequencies", empty_string);
     std::vector<int64_t> freqs;
     std::stringstream ss(raw);
     std::string token;

@@ -11,22 +11,22 @@ void NmsBucketAggregator::set_bucket_ms(int64_t ms) {
     _bucket_ms = ms;
 }
 
-bool NmsBucketAggregator::ensure_bucket(int64_t ts_ms, BucketOutputs& out) {
+bool NmsBucketAggregator::ensure_bucket(int64_t ts_ms) {
     int64_t bucket_start = (ts_ms / _bucket_ms) * _bucket_ms;
-    int64_t bucket_end = bucket_start + _bucket_ms;
 
     if (!_has_bucket) {
         start_new_bucket(bucket_start);
         return false;
     }
 
-    if (ts_ms >= _cur.bucket_end_ms) {
-        out = _cur;
+    bool emitted = false;
+    while (ts_ms >= _cur.bucket_end_ms) {
+        _ready.push_back(_cur);
+        emitted = true;
         start_new_bucket(_cur.bucket_end_ms);
-        return true;
     }
 
-    return false;
+    return emitted;
 }
 
 void NmsBucketAggregator::start_new_bucket(int64_t new_start) {
@@ -39,8 +39,7 @@ void NmsBucketAggregator::start_new_bucket(int64_t new_start) {
 void NmsBucketAggregator::on_quote(const QuoteDepth& q) {
     if (!TradingTime::in_trading_session_ms(q.data_time_ms)) return;
 
-    BucketOutputs temp_out;
-    bool should_publish = ensure_bucket(q.data_time_ms, temp_out);
+    ensure_bucket(q.data_time_ms);
 
     if (_has_last_quote && _last_trading_day == q.trading_day) {
         double d_amt = q.turnover - _last_turnover;
@@ -65,16 +64,14 @@ void NmsBucketAggregator::on_quote(const QuoteDepth& q) {
 void NmsBucketAggregator::on_transaction(const Transaction& t) {
     if (!TradingTime::in_trading_session_ms(t.data_time_ms)) return;
 
-    BucketOutputs temp_out;
-    ensure_bucket(t.data_time_ms, temp_out);
+    ensure_bucket(t.data_time_ms);
     _cur.trans.push_back(t);
 }
 
 void NmsBucketAggregator::on_entrust(const Entrust& e) {
     if (!TradingTime::in_trading_session_ms(e.data_time_ms)) return;
 
-    BucketOutputs temp_out;
-    ensure_bucket(e.data_time_ms, temp_out);
+    ensure_bucket(e.data_time_ms);
     _cur.orders.push_back(e);
 }
 
@@ -89,9 +86,20 @@ bool NmsBucketAggregator::flush_if_crossed(int64_t now_ms, BucketOutputs& out) {
 }
 
 bool NmsBucketAggregator::force_flush(BucketOutputs& out) {
+    if (pop_ready(out)) {
+        return true;
+    }
+
     if (!_has_bucket) return false;
     out = _cur;
     _has_bucket = false;
+    return true;
+}
+
+bool NmsBucketAggregator::pop_ready(BucketOutputs& out) {
+    if (_ready.empty()) return false;
+    out = _ready.front();
+    _ready.pop_front();
     return true;
 }
 

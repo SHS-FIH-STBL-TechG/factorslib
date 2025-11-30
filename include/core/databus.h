@@ -38,6 +38,7 @@
 
 #include "utils/trading_time.h"
 #include "tools/factor_ic_runtime.h"
+#include "core/scope_key.h"
 
 /**
  * @file databus.h
@@ -189,6 +190,12 @@ private:
         /// @brief 条件变量表：按 code 维护；用于 wait_* 阻塞等待与 publish 唤醒。
         std::unordered_map<std::string, std::condition_variable> cvs;
 
+        static std::string base_code_alias(const std::string& scoped_code) {
+            auto scope = parse_scope_code(scoped_code);
+            if (scope.code.empty() || scope.code == scoped_code) return {};
+            return scope.code;
+        }
+
         /**
          * @brief 构造指定容量的通道；capacity 影响每个 code 的历史上限。
          * @param cap 每个 code 的历史容量上限。
@@ -204,10 +211,22 @@ private:
             auto& dq = store[code];
             dq.emplace_back(ts, v);
             if(dq.size() > capacity) dq.pop_front();
-            cvs[code].notify_all();
-            auto it = subs.find(code);
-            if(it!=subs.end()){
-                for(auto& f: it->second){ f(code, ts, v); }
+
+            auto notify = [&](const std::string& key) {
+                if (key.empty()) return;
+                cvs[key].notify_all();
+                auto it = subs.find(key);
+                if (it != subs.end()) {
+                    for (auto& f : it->second) {
+                        f(code, ts, v);
+                    }
+                }
+            };
+
+            notify(code);
+            auto base = base_code_alias(code);
+            if (!base.empty()) {
+                notify(base);
             }
         }
 
@@ -364,11 +383,12 @@ bool DataBus::wait_for_time_exact(const std::string& topic, const std::string& c
     std::unique_lock<std::mutex> lk(_m);
     auto ch = get_channel<T>(topic);
     if(!ch) return false;
-    auto key = ch->resolve_code_key(code);
-    if (key.empty()) key = code;
-    auto& cv = ch->cvs[key];
+    auto alias_key = code;
+    auto& cv = ch->cvs[alias_key];
     while(true){
-        auto it = ch->store.find(key);
+        auto resolved = ch->resolve_code_key(code);
+        const std::string& lookup = resolved.empty() ? alias_key : resolved;
+        auto it = ch->store.find(lookup);
         if(it != ch->store.end()){
             for(const auto& kv : it->second){
                 if(kv.first == ts_ms){ out = kv.second; return true; }
@@ -387,11 +407,12 @@ bool DataBus::wait_for_time_at_least(const std::string& topic, const std::string
     std::unique_lock<std::mutex> lk(_m);
     auto ch = get_channel<T>(topic);
     if(!ch) return false;
-    auto key = ch->resolve_code_key(code);
-    if (key.empty()) key = code;
-    auto& cv = ch->cvs[key];
+    auto alias_key = code;
+    auto& cv = ch->cvs[alias_key];
     while(true){
-        auto it = ch->store.find(key);
+        auto resolved = ch->resolve_code_key(code);
+        const std::string& lookup = resolved.empty() ? alias_key : resolved;
+        auto it = ch->store.find(lookup);
         if(it != ch->store.end() && !it->second.empty()){
             const auto& back = it->second.back();
             if(back.first >= ts_ms){ out = back.second; return true; }
