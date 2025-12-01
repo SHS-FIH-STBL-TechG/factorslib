@@ -194,8 +194,14 @@ public:
             throw std::runtime_error("数据目录不存在: " + root_dir_.string());
         }
         for (const auto& entry : fs::directory_iterator(root_dir_)) {
-            if (!entry.is_regular_file() || entry.path().extension() != ".csv") continue;
-            auto series = load_file(entry.path());
+            const auto& path = entry.path();
+
+            // ✅ GCC7 兼容写法：使用自由函数 is_regular_file(path)
+            if (!fs::is_regular_file(path) || path.extension() != ".csv") {
+                continue;
+            }
+
+            auto series = load_file(path);
             if (!series.bars.empty()) {
                 all.emplace_back(std::move(series));
             }
