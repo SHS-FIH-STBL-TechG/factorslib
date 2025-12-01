@@ -1,773 +1,564 @@
-// tests/stat_factors_tests/granger_causality_factor_test.cpp
-#include <gtest/gtest.h>
+// tests/stat_factors_tests/gaussian_copula_factor_test.cpp
+
+#include "factors/stat/gaussian_copula_factor.h"
+
 #include <Eigen/Dense>
-#include <algorithm>
+#include <gtest/gtest.h>
 #include <cmath>
 #include <cstdint>
-#include <deque>
-#include <limits>
-#include <memory>
-#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "factors/stat/granger_causality_factor.h"
-#include "math/distributions.h"
 #include "core/databus.h"
 #include "core/scope_key.h"
 #include "core/types.h"
-#include "math/sliding_normal_eq.h"
+#include "math/distributions.h"
+#include "math/linear_algebra.h"
 
 using namespace factorlib;
 
 namespace {
 
-constexpr double kTolerance = 1e-6;
+constexpr int64_t kStartTs = 1'000'000;
+constexpr int64_t kQuoteStep = 10;
+constexpr const char* kCopulaTopic = "gaussian_copula/prediction";
 
-int64_t ms_of(int h, int m, int s, int ms = 0) {
-    return (((static_cast<int64_t>(h) * 60 + m) * 60) + s) * 1000 + ms;
-}
-
-struct SamplePoint {
-    double ofi;
-    double delta_mid;
+struct BusGuard {
+    BusGuard()  { DataBus::instance().reset(); }
+    ~BusGuard() { DataBus::instance().reset(); }
 };
 
-class ExpectedCalculator {
-public:
-    ExpectedCalculator(int window_size, int p_lags, int q_lags, int min_effective)
-        : window_size_(window_size),
-          p_(std::max(0, p_lags)),
-          q_(std::max(0, q_lags)),
-          min_effective_(min_effective),
-          d_r_(1 + std::max(0, p_lags)),
-          d_u_(1 + std::max(0, p_lags) + std::max(0, q_lags)),
-          ne_r_(d_r_, window_size_),
-          ne_u_(d_u_, window_size_) {}
+struct Sample {
+    int ofi;
+    int volume;
+    double log_return;
+};
 
-    std::optional<double> push(double x_t, double y_t) {
-        x_hist_.push_back(x_t);
-        y_hist_.push_back(y_t);
-        while (x_hist_.size() > static_cast<size_t>(window_size_)) x_hist_.pop_front();
-        while (y_hist_.size() > static_cast<size_t>(window_size_)) y_hist_.pop_front();
+struct ReferenceCopulaModel {
+    explicit ReferenceCopulaModel(size_t window, double reg)
+        : window_size_(window),
+          regularization_(reg),
+          cov_calc_(window) {}
 
-        if (y_hist_.size() <= max_lag()) {
-            last_p_.reset();
-            return std::nullopt;
+    void push(double ofi, double volume, double ret) {
+        ofi_rank_.push(ofi, window_size_);
+        volume_rank_.push(volume, window_size_);
+        return_rank_.push(ret, window_size_);
+
+        if (ofi_rank_.size() >= window_size_ &&
+            volume_rank_.size() >= window_size_ &&
+            return_rank_.size() >= window_size_) {
+            const double ofi_rank = ofi_rank_.median_rank(ofi);
+            const double vol_rank = volume_rank_.median_rank(volume);
+            const double ret_rank = return_rank_.median_rank(ret);
+
+            Eigen::Vector3d normal;
+            normal << math::Distributions<double>::normal_quantile(ofi_rank),
+                       math::Distributions<double>::normal_quantile(vol_rank),
+                       math::Distributions<double>::normal_quantile(ret_rank);
+            cov_calc_.push(normal);
         }
-
-        math::SlidingNormalEq<double>::Row xr(d_r_);
-        math::SlidingNormalEq<double>::Row xu(d_u_);
-        xr.setZero();
-        xu.setZero();
-        xr(0) = 1.0;
-        xu(0) = 1.0;
-        for (int i = 0; i < p_; ++i) {
-            double lag_val = y_hist_[y_hist_.size() - 1 - static_cast<size_t>(i + 1)];
-            xr(1 + i) = lag_val;
-            xu(1 + i) = lag_val;
-        }
-        for (int j = 0; j < q_; ++j) {
-            double lag_val = x_hist_[x_hist_.size() - 1 - static_cast<size_t>(j + 1)];
-            xu(1 + p_ + j) = lag_val;
-        }
-
-        ne_r_.push(xr, y_t);
-        ne_u_.push(xu, y_t);
-
-        return compute_latest();
     }
 
-    const std::vector<double>& recorded_pvals() const { return emitted_p_; }
+    bool is_window_full() const {
+        return ofi_rank_.size() >= window_size_ &&
+               volume_rank_.size() >= window_size_ &&
+               return_rank_.size() >= window_size_ &&
+               cov_calc_.size() >= window_size_;
+    }
+
+    double predict(double current_ofi, double current_volume) const {
+        auto mean = cov_calc_.mean();
+        auto covariance = cov_calc_.covariance();
+        covariance += Eigen::Matrix3d::Identity() * regularization_;
+
+        const double ofi_rank = ofi_rank_.median_rank(current_ofi);
+        const double vol_rank = volume_rank_.median_rank(current_volume);
+        Eigen::Vector2d condition;
+        condition << math::Distributions<double>::normal_quantile(ofi_rank),
+                     math::Distributions<double>::normal_quantile(vol_rank);
+
+        const double conditional_mean =
+            math::LinearAlgebra<double>::conditional_expectation(mean, covariance, condition, 2);
+        const double prob = 0.5 * (1.0 + std::erf(conditional_mean / std::sqrt(2.0)));
+        auto sorted_returns = return_rank_.get_sorted_data();
+        return math::Distributions<double>::empirical_inverse_cdf(sorted_returns, prob);
+    }
+
+    size_t window_size() const { return window_size_; }
 
 private:
-    size_t max_lag() const { return static_cast<size_t>(std::max(p_, q_)); }
-
-    std::optional<double> compute_latest() {
-        int N = std::min(static_cast<int>(y_hist_.size()), window_size_);
-        int df2 = N - (p_ + q_ + 1);
-        if (N < std::max(min_effective_, p_ + q_ + 4) || df2 <= 0) {
-            last_p_.reset();
-            return std::nullopt;
-        }
-
-        math::SlidingNormalEq<double>::Row br(d_r_);
-        math::SlidingNormalEq<double>::Row bu(d_u_);
-        double RSSr = 0.0, RSSu = 0.0;
-        if (!ne_r_.solve(br, RSSr)) return std::nullopt;
-        if (!ne_u_.solve(bu, RSSu)) return std::nullopt;
-
-        double diff = RSSr - RSSu;
-        if (diff < 0.0) diff = 0.0;
-        int k = std::max(1, q_);
-        int safe_df2 = std::max(1, df2);
-        double num = diff / static_cast<double>(k);
-        double den = RSSu / static_cast<double>(safe_df2);
-        if (!(den > 0.0)) den = 1e-18;
-        double F = num / den;
-        double pval = math::fisher_f_sf<double>(F, k, safe_df2);
-        if (!std::isfinite(pval)) {
-            pval = (F <= 0.0 ? 1.0 : std::numeric_limits<double>::min());
-        }
-        last_p_ = pval;
-        emitted_p_.push_back(pval);
-        return last_p_;
-    }
-
-    int window_size_;
-    int p_;
-    int q_;
-    int min_effective_;
-    int d_r_;
-    int d_u_;
-    math::SlidingNormalEq<double> ne_r_;
-    math::SlidingNormalEq<double> ne_u_;
-    std::deque<double> x_hist_;
-    std::deque<double> y_hist_;
-    std::optional<double> last_p_;
-    std::vector<double> emitted_p_;
+    size_t window_size_;
+    double regularization_;
+    math::IncrementalRankCalculator<double> ofi_rank_;
+    math::IncrementalRankCalculator<double> volume_rank_;
+    math::IncrementalRankCalculator<double> return_rank_;
+    math::IncrementalCovariance<double, 3> cov_calc_;
 };
 
-double strength_from_p(const GrangerConfig& cfg, double p) {
-    if (!cfg.use_neglog10) return p;
-    double val = p <= 0.0 ? -std::log10(std::numeric_limits<double>::min()) : -std::log10(p);
-    if (!std::isfinite(val)) val = 0.0;
-    if (val > cfg.strength_clip) val = cfg.strength_clip;
-    return val;
+Entrust make_order(const std::string& code, int64_t ts, int side, uint64_t volume) {
+    Entrust e{};
+    e.instrument_id = code;
+    e.data_time_ms  = ts;
+    e.price         = 100.0;
+    e.side          = side;
+    e.volume        = volume;
+    e.order_id      = ts;
+    return e;
 }
 
-class GrangerCausalityFactorTest : public ::testing::Test {
+QuoteDepth make_quote(const std::string& code, int64_t ts, double mid) {
+    QuoteDepth q{};
+    q.instrument_id = code;
+    q.data_time_ms  = ts;
+    q.bid_price = mid - 0.01;
+    q.ask_price = mid + 0.01;
+    return q;
+}
+
+void feed_orders(GaussianCopulaFactor& factor,
+                 const std::string& code,
+                 int64_t ts,
+                 int ofi,
+                 int volume,
+                 bool split) {
+    ASSERT_GE(volume, std::abs(ofi));
+    ASSERT_EQ((volume + ofi) & 1, 0) << "volume 与 ofi 需满足可拆分条件";
+
+    const int buy = (volume + ofi) / 2;
+    const int sell = volume - buy;
+
+    auto emit = [&](int amount, int side, int64_t t) {
+        if (amount <= 0) return;
+        factor.on_tick(make_order(code, t, side, static_cast<uint64_t>(amount)));
+    };
+
+    if (split && buy > 1) {
+        int first = buy / 2;
+        emit(first, +1, ts);
+        emit(buy - first, +1, ts + 1);
+    } else {
+        emit(buy, +1, ts);
+    }
+
+    if (split && sell > 1) {
+        int first = sell / 2;
+        emit(first, -1, ts + 2);
+        emit(sell - first, -1, ts + 3);
+    } else {
+        emit(sell, -1, ts + 2);
+    }
+}
+
+std::vector<Sample> build_sample_sequence(int length) {
+    std::vector<Sample> seq;
+    seq.reserve(length);
+    for (int i = 0; i < length; ++i) {
+        int base_vol = 60 + (i % 5) * 6;
+        int ofi = ((i % 7) - 3) * 4;
+        if (std::abs(ofi) > base_vol) {
+            base_vol = std::abs(ofi) + 4;
+        }
+        if (((base_vol + ofi) & 1) != 0) ++base_vol;
+        double log_ret = 0.001 * (static_cast<double>(i % 9) - 4.0);
+        seq.push_back({ofi, base_vol, log_ret});
+    }
+    return seq;
+}
+
+std::vector<double> read_predictions(const std::string& scoped_code) {
+    auto rows = DataBus::instance().get_last_n<double>(kCopulaTopic, scoped_code, 2048);
+    std::vector<double> values;
+    values.reserve(rows.size());
+    for (const auto& row : rows) values.push_back(row.second);
+    return values;
+}
+
+void ensure_volume_alignment(Sample& s) {
+    int abs_ofi = std::abs(s.ofi);
+    if (s.volume < abs_ofi) {
+        s.volume = abs_ofi + 2;
+    }
+    if (((s.volume + s.ofi) & 1) != 0) {
+        ++s.volume;
+    }
+}
+
+std::vector<Sample> build_zero_ofi_sequence(int length) {
+    std::vector<Sample> seq;
+    seq.reserve(length);
+    for (int i = 0; i < length; ++i) {
+        Sample s{};
+        s.ofi = 0;
+        s.volume = 30 + (i % 4) * 4;
+        s.log_return = 0.0005 * (static_cast<double>(i % 6) - 3.0);
+        ensure_volume_alignment(s);
+        seq.push_back(s);
+    }
+    return seq;
+}
+
+std::vector<Sample> build_negative_return_sequence(int length) {
+    auto seq = build_sample_sequence(length);
+    for (int i = 0; i < length; ++i) {
+        seq[i].log_return = -0.001 * (static_cast<double>(i % 5) + 1.0);
+        ensure_volume_alignment(seq[i]);
+    }
+    return seq;
+}
+
+std::vector<Sample> build_large_ofi_sequence(int length) {
+    std::vector<Sample> seq;
+    seq.reserve(length);
+    for (int i = 0; i < length; ++i) {
+        Sample s{};
+        s.ofi = ((i % 6) - 3) * 20;
+        s.volume = std::abs(s.ofi) + 40 + (i % 3) * 4;
+        s.log_return = 0.0008 * (static_cast<double>((i * 2) % 7) - 3.0);
+        ensure_volume_alignment(s);
+        seq.push_back(s);
+    }
+    return seq;
+}
+
+std::vector<Sample> build_volume_spike_sequence(int length) {
+    std::vector<Sample> seq;
+    seq.reserve(length);
+    for (int i = 0; i < length; ++i) {
+        Sample s{};
+        s.ofi = ((i % 5) - 2) * 6;
+        s.volume = 40 + (i % 6) * 35;
+        s.log_return = 0.0003 * (static_cast<double>(i % 9) - 4.0);
+        ensure_volume_alignment(s);
+        seq.push_back(s);
+    }
+    return seq;
+}
+
+struct SimulationResult {
+    std::vector<double> reference;
+    std::vector<double> actual;
+};
+
+SimulationResult run_sequence(GaussianCopulaFactor& factor,
+                              ReferenceCopulaModel& reference,
+                              const std::string& code,
+                              const std::vector<Sample>& samples,
+                              bool split_orders = false) {
+    QuoteDepth init = make_quote(code, kStartTs - kQuoteStep, 100.0);
+    factor.on_quote(init);
+
+    std::vector<double> ref_values;
+    double last_mid = 100.0;
+    double mid = last_mid;
+    int64_t ts = kStartTs;
+    for (const auto& sample : samples) {
+        feed_orders(factor, code, ts, sample.ofi, sample.volume, split_orders);
+        double new_mid = mid * std::exp(sample.log_return);
+        factor.on_quote(make_quote(code, ts + kQuoteStep, new_mid));
+
+        double actual_ret = std::log(new_mid / last_mid);
+        reference.push(static_cast<double>(sample.ofi),
+                       static_cast<double>(sample.volume),
+                       actual_ret);
+        if (reference.is_window_full()) {
+            ref_values.push_back(reference.predict(sample.ofi, sample.volume));
+        }
+
+        last_mid = new_mid;
+        mid = new_mid;
+        ts += 2 * kQuoteStep;
+    }
+
+    const auto scoped = compose_scope_code(code, static_cast<int>(reference.window_size()));
+    return {ref_values, read_predictions(scoped)};
+}
+
+class GaussianCopulaFactorTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        DataBus::instance().reset();
-        GrangerCausalityFactor::register_topics(8192);
-        base_cfg_.window_size   = 60;
-        base_cfg_.p_lags        = 1;
-        base_cfg_.q_lags        = 1;
-        base_cfg_.min_effective = 20;
-        base_cfg_.use_neglog10  = true;
-        base_cfg_.strength_clip = 30.0;
-        base_cfg_.publish_raw_p = true;
-        code_counter_ = 0;
+        GaussianCopulaFactor::register_topics(2048);
     }
-
-    void TearDown() override {
-        DataBus::instance().reset();
-    }
-
-    std::unique_ptr<GrangerCausalityFactor> make_factor(const GrangerConfig& cfg,
-                                                        const std::vector<std::string>& codes) {
-        return std::make_unique<GrangerCausalityFactor>(codes, cfg);
-    }
-
-    std::string next_code() {
-        return "GR_FACTOR_" + std::to_string(++code_counter_);
-    }
-
-    std::string scoped_code(const std::string& code, int window) const {
-        return compose_scope_code(code, window);
-    }
-
-    void feed_signed_order(GrangerCausalityFactor& factor, const std::string& code,
-                           int64_t ts, double signed_volume) {
-        double abs_vol = std::fabs(signed_volume);
-        if (abs_vol < 0.5) return;
-        Entrust e{};
-        e.instrument_id = code;
-        e.data_time_ms  = ts;
-        e.price         = 100.0;
-        e.side          = signed_volume >= 0.0 ? 1 : -1;
-        e.volume        = static_cast<uint64_t>(std::llround(abs_vol));
-        if (e.volume == 0) return;
-        factor.on_tick(e);
-    }
-
-    void feed_quote(GrangerCausalityFactor& factor, const std::string& code,
-                    int64_t ts, double mid) {
-        QuoteDepth q{};
-        q.instrument_id = code;
-        q.data_time_ms  = ts;
-        q.bid_price     = mid - 0.01;
-        q.ask_price     = mid + 0.01;
-        factor.on_quote(q);
-    }
-
-    void replay_event_series(GrangerCausalityFactor& factor, const std::string& code,
-                             const std::vector<SamplePoint>& samples,
-                             ExpectedCalculator& calc,
-                             double& mid,
-                             int64_t start_ts = ms_of(9, 30, 0, 0),
-                             int64_t step_ms = 200) {
-        // 预先喂一条基准报价，确保 last_mid 已初始化，因子第一条样本不会被跳过
-        feed_quote(factor, code, start_ts - step_ms, mid);
-        int64_t ts = start_ts;
-        for (const auto& sp : samples) {
-            feed_signed_order(factor, code, ts, sp.ofi);
-            mid += sp.delta_mid;
-            feed_quote(factor, code, ts + step_ms / 2, mid);
-            calc.push(sp.ofi, sp.delta_mid);
-            ts += step_ms;
-        }
-    }
-
-    std::vector<double> read_topic(const std::string& topic,
-                                   const std::string& scoped_code,
-                                   size_t max_n = 512) const {
-        auto rows = DataBus::instance().get_last_n<double>(topic, scoped_code, max_n);
-        std::vector<double> values;
-        values.reserve(rows.size());
-        for (const auto& row : rows) values.push_back(row.second);
-        return values;
-    }
-
-    static std::vector<SamplePoint> build_strong_sequence(int length,
-                                                          double amplitude,
-                                                          double phi,
-                                                          double beta) {
-        std::vector<SamplePoint> seq;
-        seq.reserve(length);
-        double y_prev = 0.0;
-        double x_prev = 0.0;
-        for (int t = 0; t < length; ++t) {
-            double x_t = (t % 4 < 2 ? amplitude : -amplitude);
-            double y_t = phi * y_prev + beta * x_prev;
-            seq.push_back({x_t, y_t});
-            y_prev = y_t;
-            x_prev = x_t;
-        }
-        return seq;
-    }
-
-    static std::vector<SamplePoint> build_noise_sequence(int length,
-                                                         double amplitude,
-                                                         double phi) {
-        std::vector<SamplePoint> seq;
-        seq.reserve(length);
-        double y_prev = 0.0;
-        for (int t = 0; t < length; ++t) {
-            double x_t = (t % 3 == 0 ? amplitude : -amplitude);
-            double y_t = phi * y_prev;
-            seq.push_back({x_t, y_t});
-            y_prev = y_t;
-        }
-        return seq;
-    }
-
-    GrangerConfig base_cfg_{};
-    int code_counter_{0};
+    BusGuard guard_;
 };
 
-std::vector<double> strengths_from_expected(const GrangerConfig& cfg,
-                                            const std::vector<double>& pvals) {
-    std::vector<double> out;
-    out.reserve(pvals.size());
-    for (double p : pvals) {
-        out.push_back(strength_from_p(cfg, p));
-    }
-    return out;
-}
-
-template<typename T>
-void expect_aligned_series(const std::vector<T>& expected,
-                           const std::vector<T>& actual,
-                           double tol = kTolerance) {
-    size_t compare = std::min(expected.size(), actual.size());
-    ASSERT_GT(compare, 0u);
-    size_t offset_expected = expected.size() - compare;
-    size_t offset_actual = actual.size() - compare;
-    for (size_t i = 0; i < compare; ++i) {
-        EXPECT_NEAR(actual[i + offset_actual], expected[i + offset_expected], tol);
+void expect_equal_series(const std::vector<double>& expected,
+                         const std::vector<double>& actual,
+                         double tol = 1e-6) {
+    ASSERT_EQ(expected.size(), actual.size());
+    for (size_t i = 0; i < expected.size(); ++i) {
+        EXPECT_NEAR(actual[i], expected[i], tol) << "index=" << i;
     }
 }
 
 } // namespace
 
-// ================== TEST CASES ==================
+TEST_F(GaussianCopulaFactorTest, PredictionsMatchReferenceModel) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 6;
+    cfg.regularization = 1e-6;
 
-/**
- * 场景：事件驱动模式 + 明显的格兰杰因果（y_t 主要受上一期 OFI 影响）。
- * 入参：长序列的方波 OFI（±80），y_t = 0.2*y_{t-1} + 0.9*x_{t-1}。
- * 期望：输出的 -log10(p) 与手工 OLS 计算完全一致，且 p 值很小。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeStrongCausalityMatchesExpected) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.window_size = 60;
-    cfg.min_effective = 25;
-    auto factor = make_factor(cfg, {code});
+    const std::string code = "GC_MATCH";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(24);
 
-    auto samples = build_strong_sequence(160, 80.0, 0.2, 0.9);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 100.0;
-    replay_event_series(*factor, code, samples, calc, mid);
-
-    auto expected_p = calc.recorded_pvals();
-    auto expected_strength = strengths_from_expected(cfg, expected_p);
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-    auto actual_p = read_topic(TOP_GRANGER_PVAL, scoped);
-
-    ASSERT_FALSE(expected_p.empty());
-    expect_aligned_series(expected_p, actual_p);
-    expect_aligned_series(expected_strength, actual_strength);
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
-/**
- * 场景：事件驱动模式 + 无因果关系（y_t 仅自回归，与 OFI 无关）。
- * 入参：OFI 仍然交替 ±100，但 y_t = 0.8*y_{t-1}。
- * 期望：strength 直接输出原始 p 值（use_neglog10=false），与手算结果一致且接近 1。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeNoCausalityMatchesExpected) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.use_neglog10 = false;
-    cfg.window_size = 80;
-    cfg.min_effective = 30;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, NoPredictionUntilWindowFilled) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 10;
+    cfg.regularization = 1e-5;
 
-    auto samples = build_noise_sequence(180, 100.0, 0.8);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 90.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code = "GC_DELAY";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(8); // shorter than window
 
-    auto expected_p = calc.recorded_pvals();
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-    auto actual_p = read_topic(TOP_GRANGER_PVAL, scoped);
-
-    ASSERT_FALSE(expected_p.empty());
-    expect_aligned_series(expected_p, actual_p);
-    expect_aligned_series(expected_p, actual_strength);
+    auto result = run_sequence(factor, ref, code, seq, false);
+    EXPECT_TRUE(result.reference.empty());
+    EXPECT_TRUE(result.actual.empty());
 }
 
-/**
- * 场景：事件驱动模式 + 配置 q=0（不使用 OFI），应退化到纯 AR 模型。
- * 入参：仍然输入显著 OFI，但因配置，x_lags 被忽略。
- * 期望：restricted 与 unrestricted 模型一致，F=0 → p=1，strength 也应为 1。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeZeroXLagBehavesAsAR) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.q_lags = 0;
-    cfg.use_neglog10 = false;
-    cfg.window_size = 40;
-    cfg.min_effective = 15;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, PendingOrdersAreAccumulatedAcrossEvents) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 5;
+    cfg.regularization = 1e-6;
 
-    auto samples = build_strong_sequence(120, 60.0, 0.6, 0.5);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 110.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code = "GC_PENDING";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(18);
 
-    auto expected_p = calc.recorded_pvals();
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-
-    ASSERT_FALSE(expected_p.empty());
-    expect_aligned_series(expected_p, actual_strength);
-    EXPECT_NEAR(actual_strength.back(), 1.0, 1e-5);
+    auto result = run_sequence(factor, ref, code, seq, true);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
-/**
- * 场景：事件驱动模式 + p=2/q=2 的多滞后模型。
- * 入参：y_t = 0.3y_{t-1} - 0.2y_{t-2} + 0.4x_{t-1} + 0.5x_{t-2}，OFI 仍为方波。
- * 期望：strength 与 raw p 均与离线 OLS 结果一致。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeTwoLagModelMatches) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.window_size = 70;
-    cfg.p_lags = 2;
-    cfg.q_lags = 2;
-    cfg.min_effective = 30;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, ForceFlushUsesPendingOrders) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 4;
+    cfg.regularization = 1e-6;
 
-    std::vector<SamplePoint> samples;
-    samples.reserve(150);
-    double y1 = 0.0, y2 = 0.0;
-    double x1 = 0.0, x2 = 0.0;
-    for (int t = 0; t < 150; ++t) {
-        double x_t = (t % 5 < 3 ? 90.0 : -90.0);
-        double y_t = 0.3 * y1 - 0.2 * y2 + 0.4 * x1 + 0.5 * x2;
-        samples.push_back({x_t, y_t});
-        y2 = y1; y1 = y_t;
-        x2 = x1; x1 = x_t;
-    }
+    const std::string code = "GC_FLUSH";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(12);
 
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 120.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.actual.empty());
+    auto scoped = compose_scope_code(code, static_cast<int>(ref.window_size()));
+    const size_t before = result.actual.size();
 
-    auto expected_p = calc.recorded_pvals();
-    auto expected_strength = strengths_from_expected(cfg, expected_p);
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-    auto actual_p = read_topic(TOP_GRANGER_PVAL, scoped);
+    // 累积一笔新的 OFI/volume ，但不触发 quote
+    const Sample pending{6, 20, 0.0};
+    feed_orders(factor, code, kStartTs + 9999, pending.ofi, pending.volume, false);
 
-    ASSERT_FALSE(expected_p.empty());
-    expect_aligned_series(expected_p, actual_p);
-    expect_aligned_series(expected_strength, actual_strength);
+    ASSERT_TRUE(ref.is_window_full());
+    const double expected = ref.predict(pending.ofi, pending.volume);
+
+    ASSERT_TRUE(factor.force_flush(scoped));
+    auto after_values = read_predictions(scoped);
+    ASSERT_EQ(before + 1, after_values.size());
+    EXPECT_NEAR(after_values.back(), expected, 1e-6);
 }
 
-/**
- * 场景：窗口较小（12）且数据远长于窗口，检验滑窗滚动是否只使用最近样本。
- * 入参：长度 80 的强因果序列。
- * 期望：输出数量与期望一致，末尾强度与手工“仅保留最近 12 条”结果完全相同。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeSlidingWindowKeepsRecent) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.window_size = 12;
-    cfg.min_effective = 8;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, MultipleCodesStayIndependent) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 6;
+    cfg.regularization = 1e-6;
 
-    auto samples = build_strong_sequence(80, 70.0, 0.1, 1.0);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 95.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code_a = "GC_MULTI_A";
+    const std::string code_b = "GC_MULTI_B";
+    GaussianCopulaFactor factor(cfg, {code_a, code_b});
+    ReferenceCopulaModel ref_a(cfg.window_size, cfg.regularization);
+    ReferenceCopulaModel ref_b(cfg.window_size, cfg.regularization);
 
-    auto expected_strength = strengths_from_expected(cfg, calc.recorded_pvals());
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
+    auto seq_a = build_sample_sequence(20);
+    auto seq_b = build_sample_sequence(22);
 
-    ASSERT_FALSE(actual_strength.empty());
-    expect_aligned_series(expected_strength, actual_strength);
+    auto res_a = run_sequence(factor, ref_a, code_a, seq_a, false);
+    auto res_b = run_sequence(factor, ref_b, code_b, seq_b, true);
+
+    ASSERT_FALSE(res_a.reference.empty());
+    ASSERT_FALSE(res_b.reference.empty());
+    expect_equal_series(res_a.reference, res_a.actual, 5e-7);
+    expect_equal_series(res_b.reference, res_b.actual, 5e-7);
 }
 
-/**
- * 场景：将 strength_clip 设置为 2.0，输入极强因果数列。
- * 入参：同样的强因果方波，但 clip 很低。
- * 期望：-log10(p) 会被裁剪到 2.0，实际输出与期望完全一致。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeStrengthClippingApplies) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.strength_clip = 2.0;
-    cfg.window_size = 40;
-    cfg.min_effective = 20;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, ZeroOFISequenceMatchesReference) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 5;
+    cfg.regularization = 1e-6;
 
-    auto samples = build_strong_sequence(120, 150.0, 0.1, 1.2);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 80.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code = "GC_ZERO_OFI";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_zero_ofi_sequence(24);
 
-    auto expected_strength = strengths_from_expected(cfg, calc.recorded_pvals());
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-
-    ASSERT_FALSE(actual_strength.empty());
-    EXPECT_DOUBLE_EQ(actual_strength.back(), cfg.strength_clip);
-    expect_aligned_series(expected_strength, actual_strength);
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
-/**
- * 场景：publish_raw_p=false，但当前实现仍会发布原始 p 值。
- * 入参：强因果序列。
- * 期望：strength 与手算一致，同时 pval 主题与手算 p 完全一致。
- */
-TEST_F(GrangerCausalityFactorTest, EventModePublishRawPDisabledStillCorrect) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.publish_raw_p = false;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, NegativeReturnSequenceMatchesReference) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 6;
+    cfg.regularization = 1e-6;
 
-    auto samples = build_strong_sequence(100, 90.0, 0.15, 0.9);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 75.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code = "GC_NEG_RET";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_negative_return_sequence(26);
 
-    auto expected_p = calc.recorded_pvals();
-    auto expected_strength = strengths_from_expected(cfg, expected_p);
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-    auto actual_p = read_topic(TOP_GRANGER_PVAL, scoped);
-
-    ASSERT_FALSE(expected_p.empty());
-    expect_aligned_series(expected_strength, actual_strength);
-    expect_aligned_series(expected_p, actual_p);
+    auto result = run_sequence(factor, ref, code, seq, true);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 3e-4);
 }
 
-/**
- * 场景：publish_raw_p=true 且 use_neglog10=false，直接输出概率序列。
- * 入参：长度 60 的中等强度序列。
- * 期望：两个 topic 的数值都应等于手算 p。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeRawPSequenceMatches) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.use_neglog10 = false;
-    cfg.window_size = 40;
-    cfg.min_effective = 18;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, HighRegularizationMatchesReference) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 7;
+    cfg.regularization = 1e-3;
 
-    auto samples = build_strong_sequence(90, 65.0, 0.3, 0.6);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 88.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code = "GC_HIGH_REG";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(30);
 
-    auto expected_p = calc.recorded_pvals();
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_p = read_topic(TOP_GRANGER_PVAL, scoped);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-
-    ASSERT_EQ(expected_p.size(), actual_p.size());
-    ASSERT_EQ(actual_strength.size(), actual_p.size());
-    for (size_t i = 0; i < expected_p.size(); ++i) {
-        EXPECT_NEAR(actual_p[i], expected_p[i], kTolerance);
-        EXPECT_NEAR(actual_strength[i], expected_p[i], kTolerance);
-    }
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-6);
 }
 
-/**
- * 场景：每个时间步拆成多笔委托后再触发 quote。
- * 入参：同一 OFI 序列分别以“单笔直接喂”和“拆成两笔累加”方式喂给不同代码。
- * 期望：两种喂数方式产生的强度/概率完全一致，证明 pending_ofi 对多笔会正确累加。
- */
-TEST_F(GrangerCausalityFactorTest, EventModePendingOFIAggregation) {
-    auto code_single = next_code();
-    auto code_split = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.window_size = 50;
-    cfg.min_effective = 20;
-    auto factor = make_factor(cfg, {code_single, code_split});
+TEST_F(GaussianCopulaFactorTest, ShortWindowMatchesReference) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 3;
+    cfg.regularization = 1e-6;
 
-    std::vector<SamplePoint> samples;
-    double pattern[] = {150.0, -120.0, 90.0, -80.0, 110.0, -70.0, 130.0, -60.0};
-    double y_prev = 0.0;
-    double x_prev = 0.0;
-    for (int i = 0; i < 120; ++i) {
-        double x_t = pattern[i % 8];
-        double y_t = 0.25 * y_prev + 0.95 * x_prev;
-        samples.push_back({x_t, y_t});
-        y_prev = y_t;
-        x_prev = x_t;
-    }
+    const std::string code = "GC_SHORT";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(18);
 
-    double mid_single = 70.0;
-    double mid_split = 70.0;
-    int64_t ts = ms_of(9, 30, 0, 0);
-    for (const auto& sp : samples) {
-        // 单笔方式：一次性把净 OFI 喂完
-        feed_signed_order(*factor, code_single, ts, sp.ofi);
-        mid_single += sp.delta_mid;
-        feed_quote(*factor, code_single, ts + 40, mid_single);
-
-        // 拆单方式：OFI 拆成两笔顺序喂入
-        double half = sp.ofi / 2.0;
-        feed_signed_order(*factor, code_split, ts, half);
-        feed_signed_order(*factor, code_split, ts + 10, sp.ofi - half);
-        mid_split += sp.delta_mid;
-        feed_quote(*factor, code_split, ts + 40, mid_split);
-
-        ts += 80;
-    }
-
-    auto scoped_single = scoped_code(code_single, cfg.window_size);
-    auto scoped_split = scoped_code(code_split, cfg.window_size);
-    auto strength_single = read_topic(TOP_GRANGER_STRENGTH, scoped_single);
-    auto strength_split = read_topic(TOP_GRANGER_STRENGTH, scoped_split);
-    auto p_single = read_topic(TOP_GRANGER_PVAL, scoped_single);
-    auto p_split = read_topic(TOP_GRANGER_PVAL, scoped_split);
-
-    ASSERT_FALSE(strength_single.empty());
-    ASSERT_EQ(strength_single.size(), strength_split.size());
-    ASSERT_EQ(p_single.size(), p_split.size());
-    for (size_t i = 0; i < strength_single.size(); ++i) {
-        EXPECT_NEAR(strength_single[i], strength_split[i], kTolerance);
-    }
-    for (size_t i = 0; i < p_single.size(); ++i) {
-        EXPECT_NEAR(p_single[i], p_split[i], kTolerance);
-    }
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
-/**
- * 场景：同一序列在不同窗口长度下计算，输出应随窗口变化。
- * 入参：长度 120 的强因果序列，分别喂给 window=20 和 window=60 的因子。
- * 期望：两个因子的输出都与各自理论值匹配，且最终强度不同。
- */
-TEST_F(GrangerCausalityFactorTest, EventModeDifferentWindowsProduceDifferentStrength) {
-    auto code_small = next_code();
-    auto code_large = next_code();
+TEST_F(GaussianCopulaFactorTest, LongSequenceMaintainsAlignment) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 6;
+    cfg.regularization = 1e-6;
 
-    GrangerConfig cfg_small = base_cfg_;
-    cfg_small.window_size = 20;
-    cfg_small.min_effective = 12;
-    auto factor_small = make_factor(cfg_small, {code_small});
+    const std::string code = "GC_LONG";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(60);
 
-    GrangerConfig cfg_large = base_cfg_;
-    cfg_large.window_size = 60;
-    cfg_large.min_effective = 30;
-    auto factor_large = make_factor(cfg_large, {code_large});
-
-    auto samples = build_strong_sequence(120, 80.0, 0.2, 1.0);
-
-    ExpectedCalculator calc_small(cfg_small.window_size, cfg_small.p_lags, cfg_small.q_lags, cfg_small.min_effective);
-    ExpectedCalculator calc_large(cfg_large.window_size, cfg_large.p_lags, cfg_large.q_lags, cfg_large.min_effective);
-
-    double mid_small = 90.0;
-    double mid_large = 90.0;
-    replay_event_series(*factor_small, code_small, samples, calc_small, mid_small);
-    replay_event_series(*factor_large, code_large, samples, calc_large, mid_large);
-
-    auto scoped_small = scoped_code(code_small, cfg_small.window_size);
-    auto scoped_large = scoped_code(code_large, cfg_large.window_size);
-    auto strength_small = read_topic(TOP_GRANGER_STRENGTH, scoped_small);
-    auto strength_large = read_topic(TOP_GRANGER_STRENGTH, scoped_large);
-
-    auto expected_small = strengths_from_expected(cfg_small, calc_small.recorded_pvals());
-    auto expected_large = strengths_from_expected(cfg_large, calc_large.recorded_pvals());
-
-    expect_aligned_series(expected_small, strength_small);
-    expect_aligned_series(expected_large, strength_large);
-    ASSERT_FALSE(strength_small.empty());
-    ASSERT_FALSE(strength_large.empty());
-    EXPECT_GT(strength_small.size(), strength_large.size());
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
-/**
- * 场景：事件模式下调用 force_flush，不应产生任何输出。
- * 入参：正常的事件驱动序列，随后对 scope 调用 force_flush。
- * 期望：force_flush 返回 false，DataBus 中的记录数量保持不变。
- */
-TEST_F(GrangerCausalityFactorTest, ForceFlushReturnsFalseInEventMode) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, SplitAndSingleOrdersProduceSamePredictions) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 6;
+    cfg.regularization = 1e-6;
 
-    auto samples = build_strong_sequence(80, 70.0, 0.2, 0.8);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 85.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    auto seq = build_sample_sequence(32);
 
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto before_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-    size_t before_count = before_strength.size();
+    const std::string code_single = "GC_SINGLE";
+    GaussianCopulaFactor factor_single(cfg, {code_single});
+    ReferenceCopulaModel ref_single(cfg.window_size, cfg.regularization);
+    auto single = run_sequence(factor_single, ref_single, code_single, seq, false);
+    expect_equal_series(single.reference, single.actual, 5e-7);
 
-    bool flushed = factor->force_flush(scoped);
-    auto after_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
+    const std::string code_split = "GC_SPLIT";
+    GaussianCopulaFactor factor_split(cfg, {code_split});
+    ReferenceCopulaModel ref_split(cfg.window_size, cfg.regularization);
+    auto split = run_sequence(factor_split, ref_split, code_split, seq, true);
+    expect_equal_series(split.reference, split.actual, 5e-7);
 
-    EXPECT_FALSE(flushed);
-    EXPECT_EQ(before_count, after_strength.size());
+    ASSERT_EQ(single.actual.size(), split.actual.size());
+    expect_equal_series(single.actual, split.actual, 5e-7);
 }
 
-/**
- * 场景：同一因子同时跟踪两个代码，两个序列的因果强度不同。
- * 入参：codeA 使用强因果序列，codeB 使用纯噪声。
- * 期望：两个 scoped code 的输出分别匹配各自的手算结果，互不干扰。
- */
-TEST_F(GrangerCausalityFactorTest, MultiCodeStatesAreIsolated) {
-    auto code_a = next_code();
-    auto code_b = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.window_size = 50;
-    cfg.min_effective = 22;
-    auto factor = make_factor(cfg, {code_a, code_b});
+TEST_F(GaussianCopulaFactorTest, ForceFlushBeforeWindowFullDoesNotPublish) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 10;
+    cfg.regularization = 1e-6;
 
-    auto seq_a = build_strong_sequence(140, 90.0, 0.2, 1.0);
-    auto seq_b = build_noise_sequence(140, 90.0, 0.7);
-    ExpectedCalculator calc_a(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    ExpectedCalculator calc_b(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
+    const std::string code = "GC_FLUSH_EARLY";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_sample_sequence(6);
 
-    double mid_a = 100.0;
-    double mid_b = 100.0;
-    replay_event_series(*factor, code_a, seq_a, calc_a, mid_a);
-    replay_event_series(*factor, code_b, seq_b, calc_b, mid_b);
+    auto result = run_sequence(factor, ref, code, seq, false);
+    EXPECT_TRUE(result.reference.empty());
+    EXPECT_TRUE(result.actual.empty());
 
-    auto scoped_a = scoped_code(code_a, cfg.window_size);
-    auto scoped_b = scoped_code(code_b, cfg.window_size);
-    auto exp_a = strengths_from_expected(cfg, calc_a.recorded_pvals());
-    auto exp_b = strengths_from_expected(cfg, calc_b.recorded_pvals());
-    auto act_a = read_topic(TOP_GRANGER_STRENGTH, scoped_a);
-    auto act_b = read_topic(TOP_GRANGER_STRENGTH, scoped_b);
-
-    expect_aligned_series(exp_a, act_a);
-    expect_aligned_series(exp_b, act_b);
+    auto scoped = compose_scope_code(code, cfg.window_size);
+    EXPECT_FALSE(factor.force_flush(scoped));
+    auto after = read_predictions(scoped);
+    EXPECT_TRUE(after.empty());
 }
 
-/**
- * 场景：min_effective 提升到 50，确保之前不会发布值。
- * 入参：长度 90 的强因果序列。
- * 期望：输出数量 = len - max(min_effective, p+q+4)，且数值匹配手算。
- */
-TEST_F(GrangerCausalityFactorTest, MinEffectiveGateDelaysPublishing) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.window_size = 60;
-    cfg.min_effective = 50;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, LargeOFISequenceMatchesReference) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 5;
+    cfg.regularization = 1e-6;
 
-    auto samples = build_strong_sequence(90, 85.0, 0.25, 0.85);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 77.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code = "GC_LARGE_OFI";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_large_ofi_sequence(28);
 
-    auto expected_strength = strengths_from_expected(cfg, calc.recorded_pvals());
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-
-    size_t threshold = static_cast<size_t>(std::max(cfg.min_effective, cfg.p_lags + cfg.q_lags + 4));
-    size_t theoretical = samples.size() > threshold ? samples.size() - (threshold - 1) : 0;
-    ASSERT_EQ(theoretical, actual_strength.size());
-    expect_aligned_series(expected_strength, actual_strength);
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
-/**
- * 场景：use_neglog10=false 且 publish_raw_p=false（但实现仍会发 p）。
- * 入参：强因果序列。
- * 期望：strength 与 pval 均等于手算概率序列。
- */
-TEST_F(GrangerCausalityFactorTest, ProbabilityModeWithoutRawPStillCorrect) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.use_neglog10 = false;
-    cfg.publish_raw_p = false;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, VolumeSpikeSequenceMatchesReference) {
+    GaussianCopulaConfig cfg;
+    cfg.window_size = 6;
+    cfg.regularization = 1e-6;
 
-    auto samples = build_strong_sequence(100, 75.0, 0.2, 0.95);
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 90.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    const std::string code = "GC_VOL_SPIKE";
+    GaussianCopulaFactor factor(cfg, {code});
+    ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
+    auto seq = build_volume_spike_sequence(30);
 
-    auto expected_p = calc.recorded_pvals();
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
-    auto actual_p = read_topic(TOP_GRANGER_PVAL, scoped);
-
-    ASSERT_FALSE(expected_p.empty());
-    expect_aligned_series(expected_p, actual_strength);
-    expect_aligned_series(expected_p, actual_p);
+    auto result = run_sequence(factor, ref, code, seq, false);
+    ASSERT_FALSE(result.reference.empty());
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
-/**
- * 场景：OFI 全程为 0，仅靠价格自身的 AR(2) 结构。
- * 入参：y_t = 0.5y_{t-1} - 0.3y_{t-2}，x_t 恒为 0。
- * 期望：因子依旧能运行，输出结果与 AR 模型手算一致。
- */
-TEST_F(GrangerCausalityFactorTest, ZeroOFIStillProducesAutoregressiveSignal) {
-    auto code = next_code();
-    GrangerConfig cfg = base_cfg_;
-    cfg.q_lags = 1;
-    cfg.window_size = 45;
-    cfg.min_effective = 18;
-    auto factor = make_factor(cfg, {code});
+TEST_F(GaussianCopulaFactorTest, DifferentWindowSizesProduceDifferentSeriesLengths) {
+    GaussianCopulaConfig cfg_small;
+    cfg_small.window_size = 4;
+    cfg_small.regularization = 1e-6;
 
-    std::vector<SamplePoint> samples;
-    samples.reserve(100);
-    double y1 = 0.0, y2 = 0.0;
-    for (int i = 0; i < 100; ++i) {
-        double y_t = 0.5 * y1 - 0.3 * y2;
-        samples.push_back({0.0, y_t});
-        y2 = y1; y1 = y_t;
-    }
+    GaussianCopulaConfig cfg_large = cfg_small;
+    cfg_large.window_size = 9;
 
-    ExpectedCalculator calc(cfg.window_size, cfg.p_lags, cfg.q_lags, cfg.min_effective);
-    double mid = 65.0;
-    replay_event_series(*factor, code, samples, calc, mid);
+    auto seq = build_sample_sequence(40);
 
-    auto expected_strength = strengths_from_expected(cfg, calc.recorded_pvals());
-    auto scoped = scoped_code(code, cfg.window_size);
-    auto actual_strength = read_topic(TOP_GRANGER_STRENGTH, scoped);
+    const std::string code_small = "GC_WIN_SMALL";
+    GaussianCopulaFactor factor_small(cfg_small, {code_small});
+    ReferenceCopulaModel ref_small(cfg_small.window_size, cfg_small.regularization);
+    auto res_small = run_sequence(factor_small, ref_small, code_small, seq, false);
+    expect_equal_series(res_small.reference, res_small.actual, 5e-7);
 
-    expect_aligned_series(expected_strength, actual_strength);
+    const std::string code_large = "GC_WIN_LARGE";
+    GaussianCopulaFactor factor_large(cfg_large, {code_large});
+    ReferenceCopulaModel ref_large(cfg_large.window_size, cfg_large.regularization);
+    auto res_large = run_sequence(factor_large, ref_large, code_large, seq, false);
+    expect_equal_series(res_large.reference, res_large.actual, 5e-7);
+
+    ASSERT_GT(res_small.actual.size(), res_large.actual.size());
 }
