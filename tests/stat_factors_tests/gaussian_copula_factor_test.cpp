@@ -415,9 +415,9 @@ TEST_F(GaussianCopulaFactorTest, NegativeReturnSequenceMatchesReference) {
     ReferenceCopulaModel ref(cfg.window_size, cfg.regularization);
     auto seq = build_negative_return_sequence(26);
 
-    auto result = run_sequence(factor, ref, code, seq, true);
+    auto result = run_sequence(factor, ref, code, seq, false);
     ASSERT_FALSE(result.reference.empty());
-    expect_equal_series(result.reference, result.actual, 3e-4);
+    expect_equal_series(result.reference, result.actual, 5e-7);
 }
 
 TEST_F(GaussianCopulaFactorTest, HighRegularizationMatchesReference) {
@@ -548,16 +548,15 @@ TEST_F(GaussianCopulaFactorTest, DifferentWindowSizesProduceDifferentSeriesLengt
 
     auto seq = build_sample_sequence(40);
 
-    const std::string code_small = "GC_WIN_SMALL";
-    GaussianCopulaFactor factor_small(cfg_small, {code_small});
+    const std::string code = "GC_WINDOW_TEST";
+    GaussianCopulaFactor factor_small(cfg_small, {code});
     ReferenceCopulaModel ref_small(cfg_small.window_size, cfg_small.regularization);
-    auto res_small = run_sequence(factor_small, ref_small, code_small, seq, false);
+    auto res_small = run_sequence(factor_small, ref_small, code, seq, false);
     expect_equal_series(res_small.reference, res_small.actual, 5e-7);
 
-    const std::string code_large = "GC_WIN_LARGE";
-    GaussianCopulaFactor factor_large(cfg_large, {code_large});
+    GaussianCopulaFactor factor_large(cfg_large, {code});
     ReferenceCopulaModel ref_large(cfg_large.window_size, cfg_large.regularization);
-    auto res_large = run_sequence(factor_large, ref_large, code_large, seq, false);
+    auto res_large = run_sequence(factor_large, ref_large, code, seq, false);
     expect_equal_series(res_large.reference, res_large.actual, 5e-7);
 
     ASSERT_GT(res_small.actual.size(), res_large.actual.size());

@@ -30,6 +30,11 @@ void HawkesIntensityFactor::on_tick(const CombinedTick& x) {
     ensure_code(x.instrument_id);
     for_each_scope(x.instrument_id, _window_sizes, x.data_time_ms, [&](const ScopeKey& scope) {
         auto& st = ensure_state(scope);
+
+        if (x.data_time_ms < st.last_ts) {
+            return; // 忽略过时数据
+        }
+
         const std::string scoped_code = scope.as_bus_code();
         double lambda = 0.0;
         if (x.kind==CombinedKind::Trade) {
@@ -39,6 +44,7 @@ void HawkesIntensityFactor::on_tick(const CombinedTick& x) {
             // 非成交：可做衰减更新（n_t=0）
             lambda = st.hawkes.update(0.0);
         }
+        st.last_ts = x.data_time_ms;
         safe_publish<double>(TOP_HAWKES, scoped_code, x.data_time_ms, lambda);
     });
 }

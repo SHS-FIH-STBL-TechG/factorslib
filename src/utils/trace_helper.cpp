@@ -4,7 +4,7 @@
 
 #include <chrono>
 #include <ctime>
-#include <filesystem>
+#include "utils/fs_compat.h"
 #include <iomanip>
 #include <sstream>
 
@@ -44,7 +44,7 @@ PERFETTO_TRACK_EVENT_STATIC_STORAGE();
 namespace {
 
 std::string BuildTimestampedPath(const std::string& base_path) {
-    namespace fs = std::filesystem;
+    namespace fs = factorlib::fs;
     fs::path input(base_path);
 
     std::string stem = input.stem().string();

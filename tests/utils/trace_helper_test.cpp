@@ -9,8 +9,8 @@
 #include <chrono>
 #include <fstream>
 #include <algorithm>
-#include <filesystem>
 #include <system_error>
+#include "utils/fs_compat.h"
 
 using namespace factorlib;
 using namespace factorlib::trace;
@@ -23,7 +23,7 @@ void RemoveTraceFileIfExists() {
         return;
     }
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    factorlib::fs::remove(path, ec);
 }
 
 } // namespace

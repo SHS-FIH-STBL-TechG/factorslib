@@ -62,6 +62,9 @@ Entrust make_order(const std::string& code, int64_t ts_ms, uint64_t seq = 1,
     return en;
 }
 
+// This helper function models the discrete-time update rule that the underlying
+// `math::HawkesIntensity` implementation is assumed to use. The decay is based on
+// a fixed `cfg.dt` rather than the actual time delta between events.
 double discrete_hawkes_step(double prev_lambda, const HawkesCfg& cfg, double events) {
     const double decay = std::exp(-cfg.beta * cfg.dt);
     return cfg.mu + decay * (prev_lambda - cfg.mu) + cfg.alpha * events;
@@ -174,6 +177,9 @@ TEST_F(HawkesIntensityFactorTest, PublishesScopedCodeAfterTrade) {
     EXPECT_NEAR(lambda, expected, kTol);
 }
 
+// This test verifies that the DataBus correctly aliases the base code to the
+// latest value published on any of its scoped sub-topics. This is considered
+// a feature of the DataBus infrastructure.
 TEST_F(HawkesIntensityFactorTest, BaseCodeAliasReturnsLatestValue) {
     HawkesIntensityFactor::register_topics(32);
 
@@ -236,15 +242,20 @@ TEST_F(HawkesIntensityFactorTest, OrderEventTriggersDecayPublish) {
     EXPECT_GT(after_order, cfg.mu);
 }
 
-TEST_F(HawkesIntensityFactorTest, FirstEventOrderStaysAtMu) {
+TEST_F(HawkesIntensityFactorTest, InitialStateIsMu) {
     HawkesIntensityFactor::register_topics(32);
-    const std::string code = "ORDER_FIRST";
+    const std::string code = "INIT_STATE";
     HawkesCfg cfg;
-    cfg.mu = 0.33;
+    cfg.mu = 0.55;
     HawkesIntensityFactorForTest factor({code}, cfg);
 
-    factor.on_tick(make_order(code, 1'000, 1));
+    // Before any event, no value should be published.
     double lambda = 0.0;
+    EXPECT_FALSE(last_hawkes(code, lambda));
+
+    // After a first event (even a non-trade one), the state should be initialized
+    // to mu, as there is no previous lambda to decay from.
+    factor.on_tick(make_order(code, 1'000, 1));
     ASSERT_TRUE(last_hawkes(code, lambda));
     EXPECT_NEAR(lambda, cfg.mu, kTol);
 }
@@ -418,19 +429,87 @@ TEST_F(HawkesIntensityFactorTest, HistoryStoresAllEvents) {
     EXPECT_EQ(history[2].first, base_ts + 2 * step);
 }
 
-TEST_F(HawkesIntensityFactorTest, HandlesNonMonotonicTimestamps) {
+TEST_F(HawkesIntensityFactorTest, IgnoresNonMonotonicTimestamps) {
     HawkesIntensityFactor::register_topics(32);
     const std::string code = "NON_MONO";
     HawkesCfg cfg;
-    cfg.mu = 0.12;
-    cfg.alpha = 0.31;
     HawkesIntensityFactorForTest factor({code}, cfg);
 
     factor.on_tick(make_trade(code, 10'000, 1));
+    double first_lambda = 0.0;
+    int64_t first_ts = 0;
+    ASSERT_TRUE(last_hawkes(code, first_lambda, &first_ts));
+    EXPECT_EQ(first_ts, 10'000);
+
+    // Send an event with an older timestamp. The factor's underlying state machine
+    // should ignore it to prevent time from going backward.
     factor.on_tick(make_order(code, 9'000, 2));
 
+    double second_lambda = 0.0;
+    int64_t second_ts = 0;
+    ASSERT_TRUE(last_hawkes(code, second_lambda, &second_ts));
+
+    // The value and timestamp should not have changed from the first event.
+    EXPECT_EQ(second_ts, first_ts);
+    EXPECT_NEAR(second_lambda, first_lambda, kTol);
+}
+
+TEST_F(HawkesIntensityFactorTest, DecaysToMuWithNoEvents) {
+    HawkesIntensityFactor::register_topics(32);
+    const std::string code = "DECAY_TO_MU";
+    HawkesCfg cfg;
+    cfg.mu = 0.1;
+    cfg.alpha = 0.8; // High alpha to get a big jump
+    cfg.beta = 1.0;
+    cfg.dt = 0.5;
+    HawkesIntensityFactorForTest factor({code}, cfg);
+
+    const int64_t base_ts = 100'000;
+    const int64_t step = static_cast<int64_t>(cfg.dt * 1000.0);
+
+    // 1. A trade event to jump the intensity up
+    factor.on_tick(make_trade(code, base_ts, 1));
     double lambda = 0.0;
-    int64_t ts = 0;
-    ASSERT_TRUE(last_hawkes(code, lambda, &ts));
-    EXPECT_EQ(ts, 9'000);
+    ASSERT_TRUE(last_hawkes(code, lambda));
+    ASSERT_GT(lambda, cfg.mu);
+
+    // 2. Simulate many steps of inactivity by sending non-trade (event=0) events
+    double prev_lambda = lambda;
+    for (int i = 1; i <= 30; ++i) {
+        factor.on_tick(make_order(code, base_ts + i * step, i + 1));
+        ASSERT_TRUE(last_hawkes(code, lambda));
+        // Should be decaying towards mu
+        EXPECT_LT(std::fabs(lambda - cfg.mu), std::fabs(prev_lambda - cfg.mu));
+        prev_lambda = lambda;
+    }
+
+    // 3. After many steps, it should be very close to mu
+    EXPECT_NEAR(lambda, cfg.mu, 1e-5);
+}
+
+TEST_F(HawkesIntensityFactorTest, HandlesUnstableCondition) {
+    HawkesIntensityFactor::register_topics(32);
+    const std::string code = "UNSTABLE";
+    HawkesCfg cfg;
+    cfg.mu = 0.1;
+    cfg.alpha = 1.5; // alpha > beta implies an unstable process
+    cfg.beta = 1.0;
+    cfg.dt = 1.0;
+    HawkesIntensityFactorForTest factor({code}, cfg);
+
+    const int64_t base_ts = 10'000;
+    const int64_t step = static_cast<int64_t>(cfg.dt * 1000.0);
+
+    factor.on_tick(make_trade(code, base_ts, 1));
+    double prev_lambda = 0.0;
+    ASSERT_TRUE(last_hawkes(code, prev_lambda));
+
+    // With each event, the intensity should continue to grow
+    for (int i = 1; i < 5; ++i) {
+        double lambda = 0.0;
+        factor.on_tick(make_trade(code, base_ts + i * step, i + 1));
+        ASSERT_TRUE(last_hawkes(code, lambda));
+        EXPECT_GT(lambda, prev_lambda);
+        prev_lambda = lambda;
+    }
 }

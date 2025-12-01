@@ -49,6 +49,7 @@ public:
 private:
     struct CodeState {
         math::HawkesIntensity hawkes{0.1,0.3,1.2,1.0};
+        int64_t last_ts = 0;
         bool inited=false;
         void init(const HawkesCfg& c) { hawkes = math::HawkesIntensity(c.mu, c.alpha, c.beta, c.dt); inited=true; }
     };

@@ -13,7 +13,6 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -38,10 +37,11 @@
 #include "core/types.h"
 #include "instrumentation/trace_helper.h"
 #include "tools/factor_ic_runtime.h"
+#include "utils/fs_compat.h"
 
 namespace factorlib::tools {
 
-namespace fs = std::filesystem;
+namespace fs = factorlib::fs;
 
 /**
  * @brief 透传外部推送的上交所快照（SH）；数据无需再次落盘，可直接进入 ingress。
