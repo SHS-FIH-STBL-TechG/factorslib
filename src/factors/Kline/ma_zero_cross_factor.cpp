@@ -1,4 +1,4 @@
-#include "factors/stat/ma_zero_cross_factor.h"
+#include "factors/kline/ma_zero_cross_factor.h"
 
 #include <algorithm>
 #include <cmath>

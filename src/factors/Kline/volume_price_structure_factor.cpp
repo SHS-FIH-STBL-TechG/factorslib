@@ -1,4 +1,4 @@
-#include "factors/stat/volume_price_structure_factor.h"
+#include "factors/kline/volume_price_structure_factor.h"
 
 #include <algorithm>
 #include <cmath>

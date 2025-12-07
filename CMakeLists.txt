@@ -344,6 +344,20 @@ add_library(factor_basic
         include/factors/stat/pca_structure_stability_factor.h
         include/factors/stat/pca_angular_momentum_factor.h
         include/factors/basic/tick_trans_orders.h
+        src/factors/Kline/ar1_return_factor.cpp
+        src/factors/Kline/ma_zero_cross_factor.cpp
+        src/factors/Kline/spectral_autocorr_factor.cpp
+        src/factors/Kline/volume_price_structure_factor.cpp
+        src/factors/Kline/low_freq_return_factor.cpp
+        src/factors/Kline/volume_ar_forecast_factor.cpp
+        src/factors/Kline/high_volume_remaining_factor.cpp
+        include/factors/kline/ar1_return_factor.h
+        include/factors/kline/ma_zero_cross_factor.h
+        include/factors/kline/spectral_autocorr_factor.h
+        include/factors/kline/volume_price_structure_factor.h
+        include/factors/kline/low_freq_return_factor.h
+        include/factors/kline/volume_ar_forecast_factor.h
+        include/factors/kline/high_volume_remaining_factor.h
 )
 
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
@@ -367,6 +381,13 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/utils/NumCountSimulation.cpp
             tests/utils/NumCountSimulation.h
             tests/tools/factor_ic_runtime_test.cpp
+            tests/kline_factors_tests/ar1_return_factor_test.cpp
+            tests/kline_factors_tests/ma_zero_cross_factor_test.cpp
+            tests/kline_factors_tests/spectral_autocorr_factor_test.cpp
+            tests/kline_factors_tests/volume_price_structure_factor_test.cpp
+            tests/kline_factors_tests/low_freq_return_factor_test.cpp
+            tests/kline_factors_tests/volume_ar_forecast_factor_test.cpp
+            tests/kline_factors_tests/high_volume_remaining_factor_test.cpp
     )
 
     add_executable(factorlib_unit_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)

@@ -1,4 +1,4 @@
-#include "factors/stat/spectral_autocorr_factor.h"
+#include "factors/kline/spectral_autocorr_factor.h"
 
 #include <algorithm>
 #include <cmath>
