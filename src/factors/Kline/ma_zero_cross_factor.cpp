@@ -37,7 +37,8 @@ void MaZeroCrossFactor::CodeState::push_bar(const Bar& b) {
 MaZeroCrossFactor::MaZeroCrossFactor(
     const std::vector<Code>& codes,
     const MaZeroCrossConfig& cfg)
-    : _cfg(cfg),
+    : BaseFactor("MaZeroCrossFactor", codes),
+      _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {}
 
 /**

@@ -38,7 +38,8 @@ bool VolumeArForecastFactor::CodeState::push_bar(const Bar& b) {
 VolumeArForecastFactor::VolumeArForecastFactor(
     const std::vector<Code>& codes,
     const VolumeArForecastConfig& cfg)
-    : _cfg(cfg),
+    : BaseFactor("VolumeArForecastFactor", codes),
+      _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {}
 
 bool VolumeArForecastFactor::accept_code(const Code& code) const {

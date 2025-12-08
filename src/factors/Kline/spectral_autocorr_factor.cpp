@@ -86,7 +86,8 @@ int SpectralAutocorrFactor::CodeState::peak_count(std::size_t max_lag,
 SpectralAutocorrFactor::SpectralAutocorrFactor(
     const std::vector<Code>& codes,
     const SpectralAutocorrConfig& cfg)
-    : _cfg(cfg),
+    : BaseFactor("SpectralAutocorrFactor", codes),
+      _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {}
 
 /**

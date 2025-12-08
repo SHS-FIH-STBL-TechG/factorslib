@@ -16,7 +16,7 @@ LowFreqReturnFactor::CodeState::CodeState(const LowFreqReturnConfig& cfg)
     : has_last_close(false),
       last_close(0.0),
       spectral(static_cast<std::size_t>(std::max(cfg.spectral_window, 8))),
-      mean_ret(static_cast<std::size_t>(std::max(cfg.mean_window, 2)))) {}
+      mean_ret(static_cast<std::size_t>(std::max(cfg.mean_window, 2))) {}
 
 bool LowFreqReturnFactor::CodeState::push_bar(const Bar& b) {
     if (!(b.close > 0.0)) return false;
@@ -41,7 +41,8 @@ bool LowFreqReturnFactor::CodeState::push_bar(const Bar& b) {
 LowFreqReturnFactor::LowFreqReturnFactor(
     const std::vector<Code>& codes,
     const LowFreqReturnConfig& cfg)
-    : _cfg(cfg),
+    : BaseFactor("LowFreqReturnFactor", codes),
+      _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {}
 
 bool LowFreqReturnFactor::accept_code(const Code& code) const {

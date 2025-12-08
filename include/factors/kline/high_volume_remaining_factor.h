@@ -5,6 +5,8 @@
 
 #include "math/rolling_quantile.h"
 #include "math/run_length_stats.h"
+#include "core/databus.h"
+#include "utils/log.h"
 
 #include <string>
 #include <unordered_map>
@@ -36,7 +38,7 @@ public:
 
     void on_bar(const Bar& b) override;
 
-    bool force_flush() override { return true; }
+    bool force_flush(const std::string& /*code*/) override { return true; }
 
 private:
     struct CodeState {

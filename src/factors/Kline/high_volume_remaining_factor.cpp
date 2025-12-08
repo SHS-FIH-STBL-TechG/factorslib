@@ -4,9 +4,6 @@
 #include <cmath>
 #include <limits>
 
-#include "core/databus.h"
-#include "utils/log.h"
-
 namespace factorlib {
 
 namespace {
@@ -42,7 +39,8 @@ bool HighVolumeRemainingFactor::CodeState::push_bar(const Bar& b) {
 HighVolumeRemainingFactor::HighVolumeRemainingFactor(
     const std::vector<Code>& codes,
     const HighVolumeRemainingConfig& cfg)
-    : _cfg(cfg),
+    : BaseFactor("HighVolumeRemainingFactor", codes),
+      _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {}
 
 bool HighVolumeRemainingFactor::accept_code(const Code& code) const {

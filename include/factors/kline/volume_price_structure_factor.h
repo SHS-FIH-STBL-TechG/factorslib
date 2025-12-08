@@ -78,7 +78,7 @@ public:
     void on_bar(const Bar& b) override;
 
     /// 对该因子而言，多数情况下无需额外 flush，直接返回 true。
-    bool force_flush() override { return true; }
+    bool force_flush(const std::string& /*code*/) override { return true; }
 
 private:
     /**

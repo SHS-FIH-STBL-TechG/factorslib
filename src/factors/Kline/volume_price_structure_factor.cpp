@@ -175,7 +175,8 @@ bool VolumePriceStructureFactor::CodeState::covariance(double cov[3][3]) const {
 VolumePriceStructureFactor::VolumePriceStructureFactor(
     const std::vector<Code>& codes,
     const VolumePriceStructureConfig& cfg)
-    : _cfg(cfg),
+    : BaseFactor("VolumePriceStructureFactor", codes),
+      _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {}
 
 /**

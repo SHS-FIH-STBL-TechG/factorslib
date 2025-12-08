@@ -331,19 +331,6 @@ add_library(factor_basic
         src/factors/stat/pca_structure_stability_factor.cpp
         src/factors/stat/pca_angular_momentum_factor.cpp
         src/factor_factory.cpp
-        include/factors/stat/gaussian_copula_factor.h
-        include/factors/stat/granger_causality_factor.h
-        include/factors/stat/least_squares_info_gain_factor.h
-        include/factors/stat/probability_momentum_factor.h
-        include/factors/stat/wavelet_trend_energy_factor.h
-        include/factors/stat/memory_kernel_decay_factor.h
-        include/factors/stat/volume_multiscale_autocorr_factor.h
-        include/factors/stat/volume_mgf_factor.h
-        include/factors/stat/hawkes_intensity_factor.h
-        include/factors/stat/symbolic_transition_factor.h
-        include/factors/stat/pca_structure_stability_factor.h
-        include/factors/stat/pca_angular_momentum_factor.h
-        include/factors/basic/tick_trans_orders.h
         src/factors/Kline/ar1_return_factor.cpp
         src/factors/Kline/ma_zero_cross_factor.cpp
         src/factors/Kline/spectral_autocorr_factor.cpp
@@ -351,13 +338,6 @@ add_library(factor_basic
         src/factors/Kline/low_freq_return_factor.cpp
         src/factors/Kline/volume_ar_forecast_factor.cpp
         src/factors/Kline/high_volume_remaining_factor.cpp
-        include/factors/kline/ar1_return_factor.h
-        include/factors/kline/ma_zero_cross_factor.h
-        include/factors/kline/spectral_autocorr_factor.h
-        include/factors/kline/volume_price_structure_factor.h
-        include/factors/kline/low_freq_return_factor.h
-        include/factors/kline/volume_ar_forecast_factor.h
-        include/factors/kline/high_volume_remaining_factor.h
 )
 
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
@@ -381,13 +361,6 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/utils/NumCountSimulation.cpp
             tests/utils/NumCountSimulation.h
             tests/tools/factor_ic_runtime_test.cpp
-            tests/kline_factors_tests/ar1_return_factor_test.cpp
-            tests/kline_factors_tests/ma_zero_cross_factor_test.cpp
-            tests/kline_factors_tests/spectral_autocorr_factor_test.cpp
-            tests/kline_factors_tests/volume_price_structure_factor_test.cpp
-            tests/kline_factors_tests/low_freq_return_factor_test.cpp
-            tests/kline_factors_tests/volume_ar_forecast_factor_test.cpp
-            tests/kline_factors_tests/high_volume_remaining_factor_test.cpp
     )
 
     add_executable(factorlib_unit_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
@@ -406,7 +379,8 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
 
     add_test(NAME run_all COMMAND $<TARGET_FILE:factorlib_unit_tests>)
 
-    # stat_factors 测试子目录
+    # Kline / stat 因子测试子目录
+    add_subdirectory(tests/Kline_factors_tests)
     add_subdirectory(tests/stat_factors_tests)
 
     # 数学工具测试子目录
@@ -420,7 +394,7 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     target_link_libraries(factor_ic_tool PRIVATE factor_basic factorlib_utils)
 
     if (FACTORLIB_ENABLE_BRANCH_COVERAGE)
-        set(_factorlib_branch_cov_deps run_all stat_factors_tests)
+        set(_factorlib_branch_cov_deps run_all kline_factors_tests stat_factors_tests)
         set(FACTORLIB_BRANCH_COVERAGE_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunBranchCoverage.cmake)
         set(FACTORLIB_BRANCH_COVERAGE_REPORT ${CMAKE_BINARY_DIR}/branch_coverage.txt)
         add_test(NAME branch_coverage

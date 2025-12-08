@@ -35,7 +35,7 @@ public:
 
     void on_bar(const Bar& b) override;
 
-    bool force_flush() override { return true; }
+    bool force_flush(const std::string& /*code*/) override { return true; }
 
 private:
     struct CodeState {

@@ -1,8 +1,10 @@
 #pragma once
 
+#include "core/databus.h"
 #include "core/ifactor.h"
 #include "core/types.h"
 #include "math/rolling_ar.h"
+#include "utils/log.h"
 
 #include <deque>
 #include <string>
@@ -82,7 +84,7 @@ public:
     /**
      * @brief 对该因子而言，通常不需要在收盘后再做额外 flush，直接返回 true。
      */
-    bool force_flush() override { return true; }
+    bool force_flush(const std::string& /*code*/) override { return true; }
 
 private:
     /**

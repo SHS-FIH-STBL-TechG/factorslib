@@ -4,9 +4,6 @@
 #include <cmath>
 #include <vector>
 
-#include "core/databus.h"
-#include "utils/log.h"
-
 namespace factorlib {
 
 namespace {
@@ -59,7 +56,8 @@ void Ar1ReturnFactor::CodeState::push_bar(const Bar& b) {
 Ar1ReturnFactor::Ar1ReturnFactor(
     const std::vector<Code>& codes,
     const Ar1ReturnConfig& cfg)
-    : _cfg(cfg),
+    : BaseFactor("Ar1ReturnFactor", codes),
+      _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {}
 
 /**
