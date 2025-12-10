@@ -6,10 +6,8 @@
 
 namespace factorlib {
 
-namespace {
 // topic 名称：56. AR1 收益自回归系数
 constexpr const char* TOP_AR1_RETURN_COEFF = "kline/ar1_return_coeff";
-} // anonymous namespace
 
 //====================== CodeState 实现 ======================//
 

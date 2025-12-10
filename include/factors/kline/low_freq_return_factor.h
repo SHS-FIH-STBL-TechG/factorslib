@@ -5,6 +5,8 @@
 
 #include "math/sliding_statistics.h"
 #include "math/spectral_features.h"
+#include "core/databus.h"
+#include "utils/log.h"
 
 #include <string>
 #include <unordered_map>
