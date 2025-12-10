@@ -1,6 +1,12 @@
 // test_factors/low_freq_return_factor_test.cpp
 #include "factors/kline/low_freq_return_factor.h"
+#include "tools/factor_leverage_transformer.h"
+
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <vector>
 #include <cmath>
 
@@ -402,6 +408,49 @@ TEST_F(LowFreqReturnFactorTest, DataBusIntegration) {
     EXPECT_EQ(received_code, "TEST015");
     EXPECT_GT(received_ts, 0);
     EXPECT_TRUE(std::isfinite(received_value));
+}
+
+TEST_F(LowFreqReturnFactorTest, LeverageTransformerPublishesLeveragedTopic) {
+    LowFreqReturnConfig cfg;
+    cfg.spectral_window = 32;
+    cfg.mean_window = 10;
+    TestLowFreqReturnFactor factor({"LEV_CODE"}, cfg);
+
+    tools::FactorLeverageSpec spec;
+    spec.input_topic = "kline/ret_lowfreq_mu10";
+    spec.output_topic = "kline/ret_lowfreq_mu10_leverage";
+    spec.window = 30;
+    tools::FactorLeverageTransformer transformer({spec}, {"LEV_CODE"}, 256);
+    transformer.start();
+
+    std::mutex m;
+    std::condition_variable cv;
+    std::vector<double> leveraged_values;
+    DataBus::instance().subscribe<double>(spec.output_topic, "LEV_CODE",
+        [&](const std::string&, int64_t, const double& val) {
+            std::lock_guard<std::mutex> lk(m);
+            leveraged_values.push_back(val);
+            cv.notify_all();
+        });
+
+    auto bars = generateTrendingBars("LEV_CODE", 200, 100.0, 0.15, 0.05);
+    for (const auto& bar : bars) {
+        factor.on_bar(bar);
+    }
+
+    {
+        std::unique_lock<std::mutex> lk(m);
+        cv.wait_for(lk, std::chrono::seconds(2), [&] {
+            return !leveraged_values.empty();
+        });
+    }
+    transformer.stop();
+
+    EXPECT_FALSE(leveraged_values.empty());
+    EXPECT_TRUE(std::all_of(leveraged_values.begin(), leveraged_values.end(),
+                            [](double v) {
+                                return std::isfinite(v);
+                            }));
 }
 
 } // namespace factorlib

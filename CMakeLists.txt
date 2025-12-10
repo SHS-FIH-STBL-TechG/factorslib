@@ -22,7 +22,6 @@ option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
 option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
-option(FACTORLIB_ENABLE_IC_RUNTIME "Enable IC evaluation runtime" ON)
 set(_factorlib_perfetto_default ON)
 if (FACTORLIB_ON_WINDOWS_MINGW)
     set(_factorlib_perfetto_default OFF)
@@ -49,7 +48,6 @@ foreach(opt
         FACTORLIB_BUILD_UNIT_TESTS
         FACTORLIB_BUILD_MATH_TESTS
         FACTORLIB_ENABLE_PARALLEL_INGRESS
-        FACTORLIB_ENABLE_IC_RUNTIME
         FACTORLIB_ENABLE_PERFETTO
         FACTORLIB_ENABLE_BRANCH_COVERAGE
 )
@@ -233,12 +231,6 @@ if (FACTORLIB_ENABLE_PARALLEL_INGRESS)
     add_definitions(-DFACTORLIB_ENABLE_PARALLEL_INGRESS=1)
 endif()
 
-if (FACTORLIB_ENABLE_IC_RUNTIME)
-    add_definitions(-DFACTORLIB_ENABLE_IC_RUNTIME=1)
-else()
-    add_definitions(-DFACTORLIB_ENABLE_IC_RUNTIME=0)
-endif()
-
 if (FACTORLIB_ENABLE_PERFETTO)
     add_definitions(-DFACTORLIB_ENABLE_PERFETTO=1)
 endif()
@@ -287,7 +279,7 @@ add_library(factorlib_utils
         src/utils/trading_time.cpp
         src/utils/nms_bucket_aggregator.cpp
         src/utils/trace_helper.cpp
-        src/tools/factor_ic_runtime.cpp
+        src/tools/factor_leverage_transformer_lib.cpp
         ${FACTORLIB_MATH_INCREMENTAL_RANK_HEADER}
         include/config/feed_mode.h
         ${FACTORLIB_MATH_SLIDING_NORMAL_EQ_HEADER}
@@ -345,6 +337,15 @@ target_include_directories(factor_basic PUBLIC
         ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
 )
 
+add_executable(factor_leverage_tool
+        src/tools/factor_leverage_transformer.cpp
+        src/tools/kline_csv_loader.cpp
+)
+target_link_libraries(factor_leverage_tool PRIVATE factor_basic factorlib_utils)
+target_include_directories(factor_leverage_tool PRIVATE
+        ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
+)
+
 # ---------- 单元测试 ----------
 if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     enable_testing()
@@ -360,7 +361,6 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
             tests/utils/test_config.cpp
             tests/utils/NumCountSimulation.cpp
             tests/utils/NumCountSimulation.h
-            tests/tools/factor_ic_runtime_test.cpp
     )
 
     add_executable(factorlib_unit_tests ${FACTORLIB_TEST_SOURCES} tests/gtest_printer_zh.h)
@@ -387,11 +387,6 @@ if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
     if (FACTORLIB_BUILD_MATH_TESTS)
         add_subdirectory(${FACTORLIB_MATH_TESTS_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/math_tests)
     endif()
-
-    add_executable(factor_ic_tool
-            tests/factor_ic_tool.cpp
-    )
-    target_link_libraries(factor_ic_tool PRIVATE factor_basic factorlib_utils)
 
     if (FACTORLIB_ENABLE_BRANCH_COVERAGE)
         set(_factorlib_branch_cov_deps run_all kline_factors_tests stat_factors_tests)

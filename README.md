@@ -46,7 +46,9 @@ factors_lib/
 │   ├── instrumentation/    # 性能观测相关
 │   │   └── trace_helper.h
 │   ├── tools/
-│   │   └── factor_ic_runtime.h
+│   │   ├── factor_leverage_transformer.h
+│   │   ├── kline_csv_loader.h
+│   │   └── sliding_gaussian_leverage.h
 │   └── factors/            # 因子头文件
 │       ├── basic/tick_trans_orders.h
 │       └── stat/*.h
@@ -59,8 +61,10 @@ factors_lib/
 │   ├── config/                 # 运行时配置
 │   │   ├── runtime_config.cpp
 │   │   └── runtime_config.ini
-│   ├── tools/                  # 运行工具
-│   │   └── factor_ic_runtime.cpp
+│   ├── tools/                  # 运行工具/脚本
+│   │   ├── factor_leverage_transformer.cpp     # 杠杆转换工具入口
+│   │   ├── factor_leverage_transformer_lib.cpp # Transformer 实现
+│   │   └── kline_csv_loader.cpp                # CSV 驱动器
 │   └── utils/                  # 工具类实现
 │       ├── data_adapter.cpp
 │       ├── log.cpp
@@ -79,12 +83,9 @@ factors_lib/
 │   │   ├── test_config.h
 │   │   ├── test_config.ini
 │   │   └── NumCountSimulation.*    # 模拟输入工具
-│   ├── tools/
-│   │   └── factor_ic_runtime_test.cpp
 │   ├── data/                       # 测试用样例数据
 │   │   └── 000001.SH-行情统计-20251117.csv 等 CSV（多支标的，供单测读取）
 │   ├── factor_compute_test.cpp
-│   ├── factor_ic_tool.cpp
 │   ├── gtest_printer_zh.h
 │   └── test_wait.cpp
 └── examples/                  # Demo 级示例（如回放脚本，按需扩展）
@@ -1217,3 +1218,30 @@ cmake .. -DFACTORLIB_ENABLE_TRACE_DEBUG=OFF
 cmake --build . -j
 ctest --output-on-failure
 ```
+
+---
+
+## 📈 因子值→杠杆转换工具（factor_leverage_tool）
+
+该工具用于复用任意 K 线因子的输出，在滑窗内做分布统计 / 正态化 / 杠杆映射，并生成可视化报告。目前默认示例为 `LowFreqReturnFactor`：
+
+1. **数据源**：从 `tests/data/*.csv`（或通过 `--data-dir` 指定目录）加载日频 K 线。`kline_csv_loader` 支持按 `--codes`、`--start-date`、`--end-date` 过滤，时间默认全量。
+2. **驱动方式**：通过 `bridge::ingest_kline` 模拟真实 ingress 流程，驱动 `LowFreqReturnFactor`，同时订阅该因子的 DataBus 主题。
+3. **杠杆转换**：`FactorLeverageTransformer` 对每个 code 维护独立的 `SlidingGaussianLeverage`；参数可用 `--window` 配置（默认 250 个交易日）。
+4. **输出产物**（默认写到 `--output-dir=output/factor_leverage`）：
+   - `factor_values.csv` / `leverage_values.csv`：记录 `(code, timestamp, value)`。
+   - `factor_distribution.png` / `leverage_distribution.png`：通过 Python + matplotlib 绘制的直方图（若本机未装，请执行 `python -m pip install matplotlib`）。
+
+### 使用示例
+
+```bash
+cmake --build build --target factor_leverage_tool
+./build/factor_leverage_tool.exe ^
+    --data-dir tests/data ^
+    --codes 000001.SH,000300.SH ^
+    --start-date 2020-01-01 ^
+    --end-date 2021-12-31 ^
+    --window 250
+```
+
+执行完成后，可在输出目录查看 CSV 与 PNG，快速了解因子在不同标的下的分布及对应杠杆值。

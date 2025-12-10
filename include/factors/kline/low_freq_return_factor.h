@@ -42,6 +42,8 @@ public:
 
     static void register_topics(std::size_t capacity);
 
+    void on_quote(const QuoteDepth& /*q*/) override {}
+    void on_tick(const CombinedTick& /*x*/) override {}
     void on_bar(const Bar& b) override;
 
     bool force_flush(const std::string& /*code*/) override { return true; }

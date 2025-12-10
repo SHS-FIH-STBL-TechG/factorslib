@@ -4,7 +4,6 @@
 #include "instrumentation/trace_helper.h"
 #include "core/ifactor.h"
 #include "core/types.h"
-#include "tools/factor_ic_runtime.h"
 
 #include <algorithm>
 #include <functional>
@@ -135,24 +134,12 @@ namespace factorlib::bridge {
     }
 
     void ingest_kline(const std::vector<std_BasicandEnhanceKLine>& v) {
-#if FACTORLIB_ENABLE_IC_RUNTIME
-        std::vector<factorlib::Bar> converted;
-        converted.reserve(v.size());
-#endif
         for (const auto& k : v) {
             auto b = factorlib::DataAdapter::from_kline(k);
             uint64_t unique_id = static_cast<uint64_t>(b.data_time_ms);
             FACTORLIB_TRACE_EVENT("ingress", "kline", b.instrument_id, 0, unique_id);
             dispatch_to_factors([b](factorlib::IFactor& f){ f.on_bar(b); });
-#if FACTORLIB_ENABLE_IC_RUNTIME
-            converted.push_back(b);
-#endif
         }
-#if FACTORLIB_ENABLE_IC_RUNTIME
-        if (!converted.empty()) {
-            factorlib::tools::ic_runtime_ingest_bars(converted);
-        }
-#endif
     }
 
     // Overloads for already-converted types (used by tests to avoid dependency on external SDK types)
@@ -186,11 +173,6 @@ namespace factorlib::bridge {
             FACTORLIB_TRACE_EVENT("ingress", "kline", b.instrument_id, 0, unique_id);
             dispatch_to_factors([b](factorlib::IFactor& f){ f.on_bar(b); });
         }
-#if FACTORLIB_ENABLE_IC_RUNTIME
-        if (!v.empty()) {
-            factorlib::tools::ic_runtime_ingest_bars(v);
-        }
-#endif
     }
 
 } // namespace factorlib::bridge

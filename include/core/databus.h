@@ -37,7 +37,6 @@
 #include <type_traits>
 
 #include "utils/trading_time.h"
-#include "tools/factor_ic_runtime.h"
 #include "core/scope_key.h"
 
 /**
@@ -280,11 +279,6 @@ void DataBus::register_topic(const std::string& topic, size_t capacity){
     if(it == _topics.end()){
         _topics.emplace(topic, std::make_pair(std::type_index(typeid(T)), std::unique_ptr<ChannelBase>(new Channel<T>(capacity))));
     }
-#if FACTORLIB_ENABLE_IC_RUNTIME
-    if constexpr (std::is_same_v<T, double>) {
-        factorlib::tools::ic_runtime_register_topic(topic);
-    }
-#endif
 }
 
 /// @brief 内部工具：根据 topic 获取已注册的具体类型通道。
@@ -303,11 +297,6 @@ void DataBus::publish(const std::string& topic, const std::string& code, int64_t
     auto ch = get_channel<T>(topic);
     if(!ch) return;
     ch->push(code, ts_ms, value);
-#if FACTORLIB_ENABLE_IC_RUNTIME
-    if constexpr (std::is_same_v<T, double>) {
-        factorlib::tools::ic_runtime_on_publish(topic, code, ts_ms, value);
-    }
-#endif
 }
 
 /// @brief 读取最新一条记录（若不存在返回 false）。
