@@ -4,6 +4,10 @@
 #include "bridge/ingress.h"
 #include "core/databus.h"
 #include "factors/kline/low_freq_return_factor.h"
+#include "factors/kline/ar1_return_factor.h"
+#include "factors/kline/high_volume_remaining_factor.h"
+#include "factors/kline/volume_ar_forecast_factor.h"
+#include "factors/kline/volume_price_structure_factor.h"
 #include "utils/fs_compat.h"
 #include "utils/log.h"
 #include "factor_tool_config.h"
@@ -16,10 +20,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <sstream>
@@ -54,6 +60,101 @@ struct CliOptions {
 namespace {
 
 const FactorToolConfig& kToolConfig = GetFactorToolConfig();
+
+struct FactorBinding {
+    std::string key;
+    std::string description;
+    std::string input_topic;
+    std::function<void(std::size_t)> register_topics;
+    std::function<std::shared_ptr<BaseFactor>(const std::vector<std::string>&)> create_factor;
+};
+
+template <typename FactorT>
+std::shared_ptr<BaseFactor> MakeBarOnlyFactor(const std::vector<std::string>& codes) {
+    struct Wrapper final : public FactorT {
+        using FactorT::FactorT;
+        void on_quote(const QuoteDepth&) override {}
+        void on_tick(const CombinedTick&) override {}
+    };
+    return std::make_shared<Wrapper>(codes);
+}
+
+const std::vector<FactorBinding>& GetFactorBindings() {
+    static const std::vector<FactorBinding> bindings = {
+        {
+            "low_freq_return",
+            "F7 低频谱 × 均值",
+            "kline/ret_lowfreq_mu10",
+            [](std::size_t cap) { LowFreqReturnFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return std::make_shared<LowFreqReturnFactor>(codes);
+            }
+        },
+        {
+            "ar1_return",
+            "AR(1) 收益自回归系数",
+            "kline/ar1_return_coeff",
+            [](std::size_t cap) { Ar1ReturnFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<Ar1ReturnFactor>(codes);
+            }
+        },
+        {
+            "high_volume_remaining",
+            "高量状态剩余时间",
+            "kline/vol_high_remaining",
+            [](std::size_t cap) { HighVolumeRemainingFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<HighVolumeRemainingFactor>(codes);
+            }
+        },
+        {
+            "volume_ar_forecast",
+            "成交量 AR 预测比值",
+            "kline/vol_ar1_pred_ratio",
+            [](std::size_t cap) { VolumeArForecastFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<VolumeArForecastFactor>(codes);
+            }
+        },
+        {
+            "volume_price_structure_corr",
+            "收益-对数成交量相关",
+            "kline/ret_logvol_corr",
+            [](std::size_t cap) { VolumePriceStructureFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<VolumePriceStructureFactor>(codes);
+            }
+        },
+        {
+            "volume_price_structure_pca1",
+            "量价第一主成分收益载荷",
+            "kline/pv_pca1_ret_loading",
+            [](std::size_t cap) { VolumePriceStructureFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<VolumePriceStructureFactor>(codes);
+            }
+        },
+    };
+    return bindings;
+}
+
+const FactorBinding* ResolveFactorBinding(const std::string& key) {
+    const auto& bindings = GetFactorBindings();
+    for (const auto& binding : bindings) {
+        if (binding.key == key) {
+            return &binding;
+        }
+    }
+    return nullptr;
+}
+
+void PrintFactorBindingList() {
+    std::cerr << "可用因子 (--factor-name):" << std::endl;
+    for (const auto& binding : GetFactorBindings()) {
+        std::cerr << "  - " << binding.key << " : " << binding.description << std::endl;
+    }
+}
 
 // 采样点结构：方便统一持久化 code/时间/数值
 struct SamplePoint {
@@ -172,7 +273,6 @@ std::optional<int64_t> parse_date(const std::string& arg) {
 
 CliOptions parse_args_internal(int argc, char** argv) {
     CliOptions opts;
-    opts.factor_name = kToolConfig.factor_name;
     opts.leverage_window = kToolConfig.default_leverage_window;
     opts.topic_capacity = kToolConfig.default_topic_capacity;
     opts.lookback_days = kToolConfig.default_lookback_days;
@@ -921,7 +1021,7 @@ CliOptions parse_cli_options(int argc, char** argv) {
     return parse_args_internal(argc, argv);
 }
 
-int run_tool(const CliOptions& opts) {
+int run_factor_binding(const FactorBinding& binding, const CliOptions& opts) {
     KlineCsvLoader loader(opts.data_dir);
     auto series_list = loader.load(opts.codes, opts.start_ms, opts.end_ms);
     if (series_list.empty()) {
@@ -939,13 +1039,17 @@ int run_tool(const CliOptions& opts) {
     std::cout << "[INFO] 处理代码数量: " << codes.size() << std::endl;
 
     DataBus::instance().reset();
-    LowFreqReturnFactor::register_topics(opts.topic_capacity);
-    auto factor = std::make_shared<LowFreqReturnFactor>(codes);
+    binding.register_topics(opts.topic_capacity);
+    auto factor = binding.create_factor(codes);
+    if (!factor) {
+        std::cerr << "[ERROR] 因子 " << binding.key << " 创建失败。" << std::endl;
+        return 1;
+    }
     bridge::set_factors({factor});
 
     FactorLeverageSpec spec;
-    spec.input_topic = "kline/ret_lowfreq_mu10";
-    spec.output_topic = "kline/ret_lowfreq_mu10_leverage";
+    spec.input_topic = binding.input_topic;
+    spec.output_topic = binding.input_topic + "_leverage";
     spec.window = opts.leverage_window;
     FactorLeverageTransformer transformer({spec}, codes, opts.topic_capacity);
     transformer.start();
@@ -1082,7 +1186,7 @@ int run_tool(const CliOptions& opts) {
         }
     }
 
-    std::string factor_dir = opts.factor_name.empty() ? kToolConfig.factor_name : opts.factor_name;
+    std::string factor_dir = binding.key;
     auto factor_dir_safe = sanitize_filename(factor_dir);
     if (factor_dir_safe.empty()) {
         factor_dir_safe = "factor";
@@ -1166,6 +1270,35 @@ int run_tool(const CliOptions& opts) {
 #endif
 
     return 0;
+}
+
+int run_tool(const CliOptions& opts) {
+    std::vector<const FactorBinding*> targets;
+    if (opts.factor_name.empty() || opts.factor_name == "all") {
+        const auto& all = GetFactorBindings();
+        for (const auto& binding : all) {
+            targets.push_back(&binding);
+        }
+    } else {
+        auto binding = ResolveFactorBinding(opts.factor_name);
+        if (!binding) {
+            std::cerr << "[ERROR] 未找到名为 \"" << opts.factor_name
+                      << "\" 的因子绑定。" << std::endl;
+            PrintFactorBindingList();
+            return 1;
+        }
+        targets.push_back(binding);
+    }
+
+    int exit_code = 0;
+    for (const auto* binding : targets) {
+        std::cout << "[INFO] ===== 因子: " << binding->key << " =====" << std::endl;
+        int rc = run_factor_binding(*binding, opts);
+        if (rc != 0) {
+            exit_code = rc;
+        }
+    }
+    return exit_code;
 }
 
 } // namespace factorlib::tools

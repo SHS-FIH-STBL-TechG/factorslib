@@ -7,7 +7,7 @@
 `factor_leverage_tool` 是一个离线分析工具，用于：
 
 1. **回放 CSV K 线数据**：从 `tests/data`（默认）读取各指数/标的的历史 K 线，按照时间顺序送入 `bridge::ingest_kline`。
-2. **驱动已实现的因子**：以 `LowFreqReturnFactor` 为例，通过 DataBus 注册并订阅 factor topic，收集原始因子值。
+2. **驱动已实现的因子**：通过 `--factor-name` 选择 `src/factors/Kline` 中的任一因子输出，注册并订阅对应 topic，收集原始因子值。
 3. **滑窗高斯化 + 杠杆发布**：`FactorLeverageTransformer` 对因子做滑窗 Z 化发布杠杆值，并通过新的 topic 输出。
 4. **采样/统计**：
    - 保存原始因子值、杠杆值及其分布图；
@@ -40,7 +40,7 @@ src/tools/
 
 | 字段                         | 含义                                               | 默认值 / 覆盖方式                           |
 |------------------------------|----------------------------------------------------|---------------------------------------------|
-| `factor_name`                | 输出子目录名称                                     | `low_freq_return`，可用 `--factor-name`     |
+| `factor_name`                | 输出子目录名称 + 选择因子                          | 默认 全部因子，可用 `--factor-name` 指定（见第 8 节） |
 | `default_leverage_window`    | 滑窗正态化窗口（传给 `SlidingGaussianLeverage`）   | `SlidingGaussianLeverage::kDefaultWindow`   |
 | `default_topic_capacity`     | DataBus topic 容量                                 | 64,000                                      |
 | `default_lookback_days`      | 裁剪回测样本的天数/条数                            | 0（全量）；可由 env `FACTOR_TOOL_LOOKBACK_DAYS` 或 CLI `--lookback-days` 覆盖 |
@@ -63,7 +63,7 @@ factor_leverage_tool [--data-dir DIR] [--output-dir DIR]
 
 常用选项：
 
-- `--factor-name`：多因子场景下区分输出目录，例如 `--factor-name low_freq_return`。
+- `--factor-name`：选择具体因子，例如 `--factor-name ar1_return`，并作为输出目录名（详见第 8 节，默认省略则遍历全部因子）。
 - `--codes`：指定需要回放的 code 列表（默认取 `tests/data` 中全部）。
 - `--start-date/--end-date`：按日过滤 CSV 数据（闭区间，end-date 会加上 23:59:59）。
 - `--window`：覆盖滑窗大小，与 `SlidingGaussianLeverage` 保持一致。
@@ -93,12 +93,12 @@ mean_factor,std_factor,baseline_mean,baseline_std,baseline_sharpe,baseline_sampl
 ## 6. 常见工作流
 
 1. **准备数据**：将 K 线 CSV 放在 `tests/data/<table>/<code>_....csv`。
-2. **运行工具**：
+2. **运行工具**（以下示例仅运行 `low_freq_return`，如果省略 `--factor-name` 会依次回测全部可用因子）：
    ```
    cmake --build build --config Release --target factor_leverage_tool -j 12
    build/Release/factor_leverage_tool.exe --codes 000001.SH --factor-name low_freq_return --lookback-days 1000
    ```
-3. **查看输出**：在 `output/low_freq_return/` 中查看各类 CSV/PNG；阈值结论在 `leverage_thresholds.csv`。
+3. **查看输出**：在 `output/<factor_name>/` 中查看各类 CSV/PNG；阈值结论在 `leverage_thresholds.csv`。
 4. **调参**：根据 `leverage_thresholds.csv` 中的 `theta_z`、`theta_raw`、`mean_return` 等指标，调整 `FactorToolConfig` 或上游因子逻辑。
 
 ## 7. 扩展建议
@@ -106,5 +106,20 @@ mean_factor,std_factor,baseline_mean,baseline_std,baseline_sharpe,baseline_sampl
 - **接入更多因子**：只需在 CLI 中指定新的 `--factor-name` 并加载对应 factor，实现层保持通用；输出目录会自动区分。
 - **可视化字体**：当前 matplotlib 使用默认字体，若需要支持中文标题，可在 `run_plot_script`/`run_relation_plot_script` 中添加 `plt.rcParams['font.sans-serif']` 配置。
 - **批量回测**：可以编写脚本循环调用 `factor_leverage_tool`，每次指定不同代码或因子名，统一收集输出。
+
+## 8. 可选因子列表
+
+当前工具内置了下列 `--factor-name` 取值（均来自 `src/factors/Kline`），会自动注册相应 topic 并对该因子输出做杠杆转换：
+
+| 名称 (`--factor-name`)            | 因子说明                     | 原始 topic                       |
+|-----------------------------------|------------------------------|----------------------------------|
+| `low_freq_return`                 | F7 低频谱 × 10 日均收益      | `kline/ret_lowfreq_mu10`         |
+| `ar1_return`                      | AR(1) 收益自回归系数         | `kline/ar1_return_coeff`         |
+| `high_volume_remaining`           | F14 高量状态剩余时间         | `kline/vol_high_remaining`       |
+| `volume_ar_forecast`              | 成交量 AR 预测比值           | `kline/vol_ar1_pred_ratio`       |
+| `volume_price_structure_corr`     | 收益-对数成交量相关         | `kline/ret_logvol_corr`          |
+| `volume_price_structure_pca1`     | 第一主成分收益载荷           | `kline/pv_pca1_ret_loading`      |
+
+> 注：纯粹描述波动/频谱结构的指标（如 `ma_zero_cross`、`spectral_*` 系列）在当前版本中不参与杠杆转换，若需接入请在 `FactorBinding` 中自行扩展。
 
 如需进一步扩展（例如引入多因子组合、更多基准对比方式），建议在此文档基础上记录新增的配置项与流程，保持工具易用性。
