@@ -22,6 +22,7 @@ option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
 option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
+option(FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS "Generate PNG plots in factor_leverage_tool" ON)
 set(_factorlib_perfetto_default ON)
 if (FACTORLIB_ON_WINDOWS_MINGW)
     set(_factorlib_perfetto_default OFF)
@@ -48,6 +49,7 @@ foreach(opt
         FACTORLIB_BUILD_UNIT_TESTS
         FACTORLIB_BUILD_MATH_TESTS
         FACTORLIB_ENABLE_PARALLEL_INGRESS
+        FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS
         FACTORLIB_ENABLE_PERFETTO
         FACTORLIB_ENABLE_BRANCH_COVERAGE
 )
@@ -340,11 +342,34 @@ target_include_directories(factor_basic PUBLIC
 add_executable(factor_leverage_tool
         src/tools/factor_leverage_transformer.cpp
         src/tools/kline_csv_loader.cpp
+        src/tools/factor_tool_config.cpp
 )
 target_link_libraries(factor_leverage_tool PRIVATE factor_basic factorlib_utils)
 target_include_directories(factor_leverage_tool PRIVATE
         ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
 )
+if (FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS)
+    target_compile_definitions(factor_leverage_tool PRIVATE FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS=1)
+else()
+    target_compile_definitions(factor_leverage_tool PRIVATE FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS=0)
+endif()
+
+# New intuitive leverage tool
+add_executable(factor_leverage_tool_new
+        src/tools_new/factor_leverage_tool.cpp
+        src/tools_new/factor_leverage_transformer_lib.cpp
+        src/tools_new/factor_tool_config.cpp
+        src/tools/kline_csv_loader.cpp
+)
+target_link_libraries(factor_leverage_tool_new PRIVATE factor_basic factorlib_utils)
+target_include_directories(factor_leverage_tool_new PRIVATE
+        ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
+)
+if (FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS)
+    target_compile_definitions(factor_leverage_tool_new PRIVATE FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS=1)
+else()
+    target_compile_definitions(factor_leverage_tool_new PRIVATE FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS=0)
+endif()
 
 # ---------- 单元测试 ----------
 if (FACTORLIB_BUILD_TESTS AND FACTORLIB_BUILD_UNIT_TESTS)
