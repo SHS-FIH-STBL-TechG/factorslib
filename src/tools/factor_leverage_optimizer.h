@@ -92,6 +92,7 @@ public:
                                                 const std::vector<double>& x_raw,
                                                 const std::vector<double>& z,
                                                 const std::vector<double>& next_ret,
+                                                const std::vector<double>& full_next_ret,
                                                 int D_sample_days) const;
     std::vector<LeveragePoint> build_leverage_series(const std::vector<int64_t>& ts,
                                                      const std::vector<double>& x_raw,

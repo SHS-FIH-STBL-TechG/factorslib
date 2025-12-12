@@ -167,6 +167,7 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
                                                                      const std::vector<double>& x_raw,
                                                                      const std::vector<double>& z,
                                                                      const std::vector<double>& next_ret,
+                                                                     const std::vector<double>& full_next_ret,
                                                                      int D_sample_days) const {
     ThresholdSearchResult best;
     if (ts.size() != z.size() || z.size() != next_ret.size() || z.empty()) {
@@ -176,12 +177,12 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
     best.profile = analyze_profile(x_raw);
     auto cand = candidates_for_kind(best.profile.kind);
 
-    // 基准 score：不使用因子，T=D，全样本 1x 持有。
-    if (D_sample_days > 0) {
+    // 基准 score：不使用因子，使用裁剪后的全样本 next_ret（长度约等于 D-1），等价于 T=D 的 1x 持有。
+    if (D_sample_days > 0 && !full_next_ret.empty()) {
         double E_base = 1.0;
         double peak = 1.0;
         double sum_dd2 = 0.0;
-        for (double r : next_ret) {
+        for (double r : full_next_ret) {
             double term = 1.0 + r;
             if (!(term > 0.0) || !std::isfinite(term)) {
                 continue;

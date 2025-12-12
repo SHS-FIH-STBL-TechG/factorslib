@@ -473,7 +473,11 @@ int main(int argc, char** argv) {
             for (double v : x_raw) centered.push_back(v - profile.median);
             auto z = opt.rank_normalize_to_z(centered);
 
-            auto best = opt.search_best_threshold(ts, x_raw, z, next_ret, D_sample_days);
+            std::vector<double> full_next_ret;
+            full_next_ret.reserve(rets.size());
+            for (const auto& rp : rets) full_next_ret.push_back(rp.r);
+
+            auto best = opt.search_best_threshold(ts, x_raw, z, next_ret, full_next_ret, D_sample_days);
             if (!best.ok) {
                 std::cerr << "[" << factor_name << "] no valid threshold for " << code << "\n";
                 std::vector<factorlib::tools::LeveragePoint> placeholder;
