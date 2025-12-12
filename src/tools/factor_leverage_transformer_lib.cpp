@@ -1,4 +1,4 @@
-#include "tools/factor_leverage_transformer.h"
+#include "factor_leverage_transformer.h"
 
 #include "core/databus.h"
 #include "utils/log.h"
@@ -9,13 +9,8 @@
 
 namespace factorlib::tools {
 
-// ---------------------------------------------------------------------
-// 本文件提供 FactorLeverageTransformer 的具体实现：负责订阅因子输出、
-// 做滑窗正态化，并将新的杠杆值发布回 DataBus。该实现被工具和单元测试复用。
-// ---------------------------------------------------------------------
 namespace {
 
-// 去重并清洗 code 列表，避免重复订阅与空串
 std::vector<std::string> dedup_codes(std::vector<std::string> codes) {
     codes.erase(std::remove_if(codes.begin(), codes.end(),
                                [](const std::string& c) { return c.empty(); }),
@@ -70,7 +65,6 @@ void FactorLeverageTransformer::start() {
             continue;
         }
         for (const auto& code : _codes) {
-            // 订阅每个 code 的原始因子输出，回调仅负责投递到本地队列
             DataBus::instance().subscribe<double>(
                 spec.input_topic,
                 code,
@@ -129,7 +123,6 @@ void FactorLeverageTransformer::enqueue_event(std::size_t spec_index,
 }
 
 void FactorLeverageTransformer::worker_loop() {
-    // 单线程顺序消费事件队列，防止 DataBus 回调嵌套
     while (true) {
         Event evt;
         {

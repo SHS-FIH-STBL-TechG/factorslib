@@ -1,4 +1,4 @@
-#include "tools/kline_csv_loader.h"
+#include "kline_csv_loader.h"
 
 #include <algorithm>
 #include <cctype>
@@ -9,11 +9,6 @@
 #include <stdexcept>
 
 namespace factorlib::tools {
-
-// ---------------------------------------------------------------------
-// KlineCsvLoader：读取 tests/data 或指定目录下的日频 CSV，并转换为
-// factorlib::Bar 序列，支持 code 过滤与起止时间裁剪。
-// ---------------------------------------------------------------------
 
 namespace {
 
@@ -50,7 +45,6 @@ std::vector<KlineCsvSeries> KlineCsvLoader::load(
         throw std::runtime_error("数据目录不存在: " + root.string());
     }
 
-    // 枚举目录下的所有 CSV 文件
     for (const auto& entry : fs::directory_iterator(root)) {
         if (!entry.is_regular_file() || entry.path().extension() != ".csv") {
             continue;
@@ -129,7 +123,6 @@ std::vector<KlineCsvSeries> KlineCsvLoader::load(
     return result;
 }
 
-// 处理无引号嵌套的简单 CSV 行
 std::vector<std::string> KlineCsvLoader::parse_csv_line(const std::string& line) {
     std::vector<std::string> cells;
     std::string current;
@@ -154,7 +147,6 @@ std::vector<std::string> KlineCsvLoader::parse_csv_line(const std::string& line)
     return cells;
 }
 
-// 去除字符串两端的空白
 std::string KlineCsvLoader::trim(const std::string& value) {
     auto begin = value.begin();
     while (begin != value.end() && std::isspace(static_cast<unsigned char>(*begin))) {
@@ -167,7 +159,6 @@ std::string KlineCsvLoader::trim(const std::string& value) {
     return std::string(begin, end);
 }
 
-// 将 yyyy-mm-dd 转成 UTC 毫秒时间戳
 std::optional<int64_t> KlineCsvLoader::parse_date_to_ms(const std::string& date_token) {
     int y = 0, m = 0, d = 0;
     if (std::sscanf(date_token.c_str(), "%d-%d-%d", &y, &m, &d) == 3) {
@@ -176,7 +167,6 @@ std::optional<int64_t> KlineCsvLoader::parse_date_to_ms(const std::string& date_
     return std::nullopt;
 }
 
-// 解析数字，自动去掉千分位和空格
 std::optional<double> KlineCsvLoader::parse_number(const std::string& token) {
     if (token.empty()) return std::nullopt;
     std::string sanitized;
@@ -192,7 +182,6 @@ std::optional<double> KlineCsvLoader::parse_number(const std::string& token) {
     }
 }
 
-// CSV 文件名形如 CODE-其他信息.csv，提取 CODE 作为标的
 std::string KlineCsvLoader::extract_code(const std::string& file_name) {
     auto stem = file_name;
     auto pos = stem.find('-');
@@ -204,7 +193,6 @@ std::string KlineCsvLoader::extract_code(const std::string& file_name) {
     return stem;
 }
 
-// 根据命令行传入的过滤列表判断是否需要加载该标的
 bool KlineCsvLoader::accept_code(const std::vector<std::string>& filters,
                                  const std::string& code) {
     if (filters.empty()) return true;
@@ -212,3 +200,4 @@ bool KlineCsvLoader::accept_code(const std::vector<std::string>& filters,
 }
 
 } // namespace factorlib::tools
+
