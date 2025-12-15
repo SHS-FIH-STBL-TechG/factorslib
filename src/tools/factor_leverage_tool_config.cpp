@@ -6,6 +6,8 @@
 #include "factors/kline/volume_ar_forecast_factor.h"
 #include "factors/kline/volume_price_structure_factor.h"
 #include "factors/kline/kalman_forecast_z_factor.h"
+#include "factors/stat/wavelet_trend_energy_factor.h"
+#include "factors/Kline_new/haar_wavelet_trend_factor.h"
 
 #include <utility>
 
@@ -81,6 +83,22 @@ const std::vector<FactorBinding>& GetFactorBindings() {
             [](std::size_t cap) { factorlib::KalmanForecastZFactor::register_topics(cap); },
             [](const std::vector<std::string>& codes) {
                 return MakeBarOnlyFactor<factorlib::KalmanForecastZFactor>(codes);
+            }
+        },
+        {
+            "wavelet_trend_energy",
+            factorlib::TOP_WAVE_TREND,
+            [](std::size_t cap) { factorlib::WaveletTrendEnergyFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<factorlib::WaveletTrendEnergyFactor>(codes);
+            }
+        },
+        {
+            "haar_wavelet_trend",
+            "kline_new/haar_trend_energy",
+            [](std::size_t cap) { factorlib::HaarWaveletTrendFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<factorlib::HaarWaveletTrendFactor>(codes);
             }
         },
     };

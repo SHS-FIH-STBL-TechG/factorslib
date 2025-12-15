@@ -1,6 +1,7 @@
 #include "factors/stat/wavelet_trend_energy_factor.h"
 
 #include <cmath>
+#include <limits>
 #include <utility>
 
 #include "config/runtime_config.h"
@@ -21,6 +22,14 @@ WaveletTrendEnergyFactor::CodeState::CodeState(const WaveTrendConfig& cfg)
                  ? math::wavelet_sym4()
                  : math::wavelet_db4())) {
     window_size = cfg.window_size;
+}
+
+static inline double safe_log(double x) {
+    return (x > 0.0) ? std::log(x) : std::numeric_limits<double>::quiet_NaN();
+}
+
+static inline double sign(double x) {
+    return (x > 0.0) ? 1.0 : ((x < 0.0) ? -1.0 : 0.0);
 }
 
 // =====================[ 构造 & 配置 ]=====================
@@ -88,14 +97,23 @@ void WaveletTrendEnergyFactor::on_price_event(const std::string& code_raw,
                                               double price) {
     if (!(price > 0.0)) return;
 
+    const double logp = safe_log(price);
+    if (!std::isfinite(logp)) return;
+
     ensure_code(code_raw);
     for_each_scope(code_raw, _window_sizes, ts_ms, [&](const ScopeKey& scope) {
         auto& st = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 
-        if (!st.modwt.push(price)) {
-            LOG_DEBUG("WaveletTrendEnergy: push failed, code={}, price={}", scoped_code, price);
+        if (!st.modwt.push(logp)) {
+            LOG_DEBUG("WaveletTrendEnergy: push failed, code={}, log_price={}", scoped_code, logp);
             return;
+        }
+
+        const int W = std::max(1, st.window_size);
+        st.log_price_window.push_back(logp);
+        while (static_cast<int>(st.log_price_window.size()) > W) {
+            st.log_price_window.pop_front();
         }
 
         if (st.modwt.ready()) {
@@ -110,10 +128,19 @@ void WaveletTrendEnergyFactor::compute_and_publish(const std::string& code,
     double ratio = st.modwt.trend_energy_ratio(_cfg.trend_start_j);
     if (!std::isfinite(ratio)) return;
 
-    LOG_DEBUG("WaveletTrendEnergy: code={} ts={} ratio={}",
-              code, ts_ms, ratio);
+    double dir = 0.0;
+    if (st.log_price_window.size() >= 2) {
+        const double d = st.log_price_window.back() - st.log_price_window.front();
+        if (std::isfinite(d)) {
+            dir = sign(d);
+        }
+    }
+    const double signed_ratio = dir * ratio;
 
-    safe_publish<double>(TOP_WAVE_TREND, code, ts_ms, ratio);
+    LOG_DEBUG("WaveletTrendEnergy: code={} ts={} ratio={} dir={} signed={}",
+              code, ts_ms, ratio, dir, signed_ratio);
+
+    safe_publish<double>(TOP_WAVE_TREND, code, ts_ms, signed_ratio);
 }
 
 // =====================[ IFactor 接口 ]=====================

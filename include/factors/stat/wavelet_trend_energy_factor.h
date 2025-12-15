@@ -7,7 +7,7 @@
  *   - 使用 RollingMODWT<double> 对价格序列做最大重叠小波分解；
  *   - 对每个尺度 j 维护 detail 系数能量 E_j；
  *   - 趋势能量比 = (j >= trend_start_j 的能量之和) / (全部能量之和);
- *   - 通过 DataBus 发布 [0,1] 的能量占比。
+ *   - 通过 DataBus 发布“带方向”的趋势强度：sign(ΔlogP) * ratio，范围 [-1,1]。
  *
  * 实现约束：
  *   - 只依赖 include/math/modwt.h 中真实存在的接口：
@@ -20,6 +20,7 @@
  */
 
 #include <string>
+#include <deque>
 #include <unordered_map>
 #include <vector>
 
@@ -65,8 +66,8 @@ public:
 private:
     struct CodeState {
         math::RollingMODWT<double> modwt;
-        bool ready = false;
         int window_size = 0;
+        std::deque<double> log_price_window;
 
         explicit CodeState(const WaveTrendConfig& cfg);
     };

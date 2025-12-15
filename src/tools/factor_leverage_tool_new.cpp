@@ -23,6 +23,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -47,6 +48,237 @@ bool has_flag(int argc, char** argv, const std::string& key) {
     }
     return false;
 }
+
+#if !defined(_WIN32)
+std::optional<std::string> maybe_default_linux_parquet_dir() {
+    static const char* kDefault = "/mnt/disk2/qdata/dm/401000001";
+    std::error_code ec;
+    if (fs::exists(kDefault, ec) && fs::is_directory(kDefault, ec)) {
+        return std::string(kDefault);
+    }
+    return std::nullopt;
+}
+
+fs::path materialize_kline_csv_from_parquet(const fs::path& parquet_dir,
+                                            const fs::path& out_dir_base,
+                                            const std::vector<std::string>& codes_filter,
+                                            const std::optional<int64_t>& start_ms,
+                                            const std::optional<int64_t>& end_ms) {
+    std::ostringstream tag;
+    tag << "parquet_cache_" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::system_clock::now().time_since_epoch())
+                                  .count();
+    fs::path cache_dir = out_dir_base / tag.str();
+    fs::create_directories(cache_dir);
+
+    fs::path script_path = cache_dir / "parquet_to_kline_csv.py";
+    {
+        std::ofstream script(script_path);
+        script << R"PY(import os, sys
+
+def _pick(cols, candidates):
+    cols_l = {c.lower(): c for c in cols}
+    for name in candidates:
+        if name.lower() in cols_l:
+            return cols_l[name.lower()]
+    return None
+
+def _to_ymd(v):
+    if v is None:
+        return None
+    try:
+        import pandas as pd
+        if isinstance(v, pd.Timestamp):
+            return v.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    try:
+        if isinstance(v, (int,)) or (isinstance(v, str) and v.isdigit()):
+            s = str(v)
+            if len(s) == 8:
+                return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+    except Exception:
+        pass
+    try:
+        s = str(v)
+        if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+            return s[0:10]
+    except Exception:
+        pass
+    return None
+
+def main():
+    # argv: parquet_dir out_dir codes_csv start_ms end_ms
+    if len(sys.argv) < 3:
+        print("Usage: python parquet_to_kline_csv.py parquet_dir out_dir [codes_csv] [start_ms] [end_ms]")
+        return 2
+    parquet_dir = sys.argv[1]
+    out_dir = sys.argv[2]
+    codes_csv = sys.argv[3] if len(sys.argv) > 3 else ""
+    start_ms = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
+    end_ms = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None
+
+    codes = set([c for c in codes_csv.split(",") if c]) if codes_csv else None
+
+    try:
+        import pyarrow.dataset as ds
+    except Exception as e:
+        print("[ERR] pyarrow is required to read parquet:", e)
+        return 3
+
+    dataset = ds.dataset(parquet_dir, format="parquet")
+    schema_cols = [f.name for f in dataset.schema]
+
+    # dm/401000001 schema examples:
+    #   icode (Wind code), tradeDate (yyyymmdd), pxopen/pxhigh/pxlow/pxclose (uint32, 2dp),
+    #   qty (uint64, 手), amt (float64, 千元)
+    col_date = _pick(schema_cols, ["tradeDate", "trade_date", "date", "datetime", "dt", "time", "timestamp", "ts"])
+    col_code = _pick(schema_cols, ["icode", "code", "instrument_id", "symbol", "ticker"])
+    col_open = _pick(schema_cols, ["pxopen", "open", "open_price"])
+    col_high = _pick(schema_cols, ["pxhigh", "high", "high_price"])
+    col_low  = _pick(schema_cols, ["pxlow", "low", "low_price"])
+    col_close = _pick(schema_cols, ["pxclose", "close", "close_price", "adj_close", "price"])
+    col_chg = _pick(schema_cols, ["pxchg", "chg", "change"])
+    col_roc = _pick(schema_cols, ["roc", "pct_chg", "pct_change", "return"])
+    col_qty = _pick(schema_cols, ["qty", "volume", "vol"])
+    col_amt = _pick(schema_cols, ["amt", "amount", "turnover"])
+
+    if not col_date:
+        print("[ERR] cannot find date column in parquet schema:", schema_cols)
+        return 4
+    if not col_close:
+        print("[ERR] cannot find close column in parquet schema:", schema_cols)
+        return 4
+
+    columns = [c for c in [col_code, col_date, col_open, col_high, col_low, col_close,
+                           col_chg, col_roc, col_qty, col_amt] if c]
+
+    filt = None
+    try:
+        import pyarrow as pa
+        from datetime import datetime
+
+        def _ms_to_int_yyyymmdd(ms):
+            dt = datetime.utcfromtimestamp(ms / 1000.0)
+            return int(dt.strftime("%Y%m%d"))
+
+        if codes is not None and col_code:
+            filt = ds.field(col_code).isin(list(codes))
+
+        if col_date and (start_ms is not None or end_ms is not None):
+            ftype = dataset.schema.field(col_date).type
+            if pa.types.is_integer(ftype):
+                lo = _ms_to_int_yyyymmdd(start_ms) if start_ms is not None else None
+                hi = _ms_to_int_yyyymmdd(end_ms) if end_ms is not None else None
+                if lo is not None:
+                    expr = ds.field(col_date) >= lo
+                    filt = expr if filt is None else (filt & expr)
+                if hi is not None:
+                    expr = ds.field(col_date) <= hi
+                    filt = expr if filt is None else (filt & expr)
+    except Exception:
+        filt = filt
+
+    table = dataset.to_table(columns=columns, filter=filt) if filt is not None else dataset.to_table(columns=columns)
+    data = table.to_pylist()
+
+    def _scale_price(x):
+        if x is None:
+            return None
+        try:
+            # dm/401000001 px* is uint32 with 2 decimals, stored as integer points
+            if isinstance(x, (int,)) or (isinstance(x, str) and x.isdigit()):
+                xi = int(x)
+                return xi / 100.0
+            return float(x)
+        except Exception:
+            return None
+
+    def _scale_qty_to_wangu(x):
+        if x is None:
+            return None
+        try:
+            # qty: 手; tests/data expects 成交量(万股). 1手=100股 => 万股=10000股 => 手*0.01
+            return float(x) * 0.01
+        except Exception:
+            return None
+
+    def _scale_amt_to_wanyuan(x):
+        if x is None:
+            return None
+        try:
+            # amt: 千元; tests/data expects 成交额(万元) => /10
+            return float(x) / 10.0
+        except Exception:
+            return None
+
+    grouped = {}
+    for row in data:
+        code = str(row.get(col_code, "")) if col_code else "ALL"
+        if codes is not None and code not in codes:
+            continue
+        ymd = _to_ymd(row.get(col_date))
+        if not ymd:
+            continue
+        o = _scale_price(row.get(col_open, None)) if col_open else None
+        h = _scale_price(row.get(col_high, None)) if col_high else None
+        l = _scale_price(row.get(col_low, None)) if col_low else None
+        c = _scale_price(row.get(col_close, None))
+        if c is None:
+            continue
+        chg = _scale_price(row.get(col_chg, None)) if col_chg else None
+        roc = row.get(col_roc, None) if col_roc else None
+        vol = _scale_qty_to_wangu(row.get(col_qty, None)) if col_qty else None
+        amt = _scale_amt_to_wanyuan(row.get(col_amt, None)) if col_amt else None
+        grouped.setdefault(code, []).append((ymd, o, h, l, c, chg, roc, None, None, vol, amt, None))
+
+    os.makedirs(out_dir, exist_ok=True)
+    for code, rows in grouped.items():
+        rows.sort(key=lambda x: x[0])
+        out_path = os.path.join(out_dir, f"{code}.csv")
+        with open(out_path, "w", encoding="utf-8") as f:
+            # Align with tests/data loader column positions:
+            # [0]=date, [1..4]=OHLC, [9]=volume, [10]=turnover
+            f.write("交易日期,开盘点位,最高点位,最低点位,收盘价,涨跌,涨跌幅(%),开始日累计涨跌,开始日累计涨跌幅,成交量(万股),成交额(万元),持仓量\\n")
+            def fmt(x):
+                return \"\" if x is None else str(x)
+            for (ymd, o, h, l, c, chg, roc, acc_chg, acc_roc, vol, amt, oi) in rows:
+                f.write(\",\".join([ymd, fmt(o), fmt(h), fmt(l), fmt(c),
+                                   fmt(chg), fmt(roc), fmt(acc_chg), fmt(acc_roc),
+                                   fmt(vol), fmt(amt), fmt(oi)]) + \"\\n\")
+
+    return 0
+
+if __name__ == \"__main__\":
+    sys.exit(main())
+)PY";
+    }
+
+    std::ostringstream codes_csv;
+    for (std::size_t i = 0; i < codes_filter.size(); ++i) {
+        if (i) codes_csv << ",";
+        codes_csv << codes_filter[i];
+    }
+
+    auto run_py = [&](const std::string& pybin) -> int {
+        std::ostringstream cmd;
+        cmd << pybin << " \"" << script_path.string() << "\" \"" << parquet_dir.string() << "\" \""
+            << cache_dir.string() << "\" \"" << codes_csv.str() << "\" \""
+            << (start_ms ? std::to_string(*start_ms) : std::string()) << "\" \""
+            << (end_ms ? std::to_string(*end_ms) : std::string()) << "\"";
+        return std::system(cmd.str().c_str());
+    };
+
+    int rc = run_py("python3");
+    if (rc != 0) {
+        rc = run_py("python");
+    }
+    if (rc != 0) {
+        throw std::runtime_error("parquet->csv failed (rc=" + std::to_string(rc) + ")");
+    }
+    return cache_dir;
+}
+#endif
 
 std::vector<std::string> split_csv(const std::string& s) {
     std::vector<std::string> out;
@@ -135,6 +367,8 @@ struct WfPoint {
     double symmetry_score = std::numeric_limits<double>::quiet_NaN();
     double unique_ratio = std::numeric_limits<double>::quiet_NaN();
     double max_freq_ratio = std::numeric_limits<double>::quiet_NaN();
+    double theta_raw_low = std::numeric_limits<double>::quiet_NaN();
+    double theta_raw_high = std::numeric_limits<double>::quiet_NaN();
 };
 
 double compute_b_raw(double zv,
@@ -189,7 +423,7 @@ void write_wf_csv(const fs::path& path,
                   const std::string& code,
                   const std::string& factor_key) {
     std::ofstream out(path);
-    out << "date,code,factor,factor_raw,z,mode,polarity,theta,z_cap,c_scale,b_raw,leverage,next_return,equity,drawdown,active,profile_kind,symmetry_score,unique_ratio,max_freq_ratio\n";
+    out << "date,code,factor,factor_raw,z,mode,polarity,theta,z_cap,c_scale,b_raw,leverage,next_return,equity,drawdown,active,profile_kind,symmetry_score,unique_ratio,max_freq_ratio,raw_threshold_low,raw_threshold_high\n";
     auto kind_to_str = [](factorlib::tools::FactorDistributionKind k) {
         switch (k) {
             case factorlib::tools::FactorDistributionKind::SymmetricContinuous: return "symmetric";
@@ -225,7 +459,9 @@ void write_wf_csv(const fs::path& path,
             << kind_to_str(p.profile_kind) << ","
             << p.symmetry_score << ","
             << p.unique_ratio << ","
-            << p.max_freq_ratio
+            << p.max_freq_ratio << ","
+            << p.theta_raw_low << ","
+            << p.theta_raw_high
             << "\n";
     }
 }
@@ -275,6 +511,19 @@ bool run_triple_hist_plot(const fs::path& script_path,
                           const std::string& theta_text,
                           const std::string& score_text,
                           const std::string& baseline_text) {
+#if !defined(_WIN32)
+    (void)script_path;
+    (void)csv_path;
+    (void)png_path;
+    (void)title;
+    (void)factor_col;
+    (void)b_col;
+    (void)leverage_col;
+    (void)theta_text;
+    (void)score_text;
+    (void)baseline_text;
+    return false;
+#else
     std::ofstream script(script_path);
     script << R"PLOT(import csv, sys, math
 import matplotlib
@@ -361,6 +610,7 @@ if __name__ == "__main__":
         << baseline_text << "\"";
     int rc = std::system(cmd.str().c_str());
     return rc == 0;
+#endif
 }
 
 } // namespace
@@ -371,17 +621,27 @@ int main(int argc, char** argv) {
             << "Usage:\n"
             << "  factor_leverage_tool_new \\\n"
             << "    [--data_dir DIR]                (default tests/data) \\\n"
+            << "    [--parquet_dir DIR]             (Linux only; default /mnt/disk2/qdata/dm/401000001 if exists) \\\n"
             << "    [--factor name1,name2|all]      (default all built-ins) \\\n"
             << "    [--codes CODE1,CODE2,...]       (default load every CSV) \\\n"
             << "    [--start YYYY-MM-DD] [--end YYYY-MM-DD] \\\n"
             << "    [--out_dir DIR]                 (default output/factor_leverage) \\\n"
             << "    [--theta_min 0] [--theta_max 2.5] [--theta_step 0.05] \\\n"
             << "    [--D 250] [--max_leverage 2] \\\n"
-            << "    [--train 252] [--step 1] [--zwin 250]\n";
+            << "    [--train 252] [--step 1] [--zwin 250]\n"
+#if !defined(_WIN32)
+            << "Notes:\n"
+            << "  - On Linux, this tool does not generate PNG plots.\n"
+#endif
+            ;
         return 0;
     }
 
     std::string data_dir = get_arg(argc, argv, "--data_dir").value_or(DefaultDataDir());
+    std::optional<int64_t> start_ms;
+    std::optional<int64_t> end_ms;
+    if (auto v = get_arg(argc, argv, "--start")) start_ms = parse_date_utc_ms(*v);
+    if (auto v = get_arg(argc, argv, "--end")) end_ms = parse_date_utc_ms(*v);
 
     std::vector<std::string> requested_factors;
     if (auto factor_arg = get_arg(argc, argv, "--factor")) {
@@ -403,6 +663,16 @@ int main(int argc, char** argv) {
         get_arg(argc, argv, "--out_dir").value_or(DefaultOutputDir());
     fs::create_directories(out_dir_base);
 
+#if !defined(_WIN32)
+    std::optional<std::string> parquet_dir = get_arg(argc, argv, "--parquet_dir");
+    if (!parquet_dir.has_value() && !get_arg(argc, argv, "--data_dir").has_value()) {
+        parquet_dir = maybe_default_linux_parquet_dir();
+    }
+    if (parquet_dir.has_value()) {
+        data_dir = materialize_kline_csv_from_parquet(*parquet_dir, out_dir_base, codes, start_ms, end_ms).string();
+    }
+#endif
+
     factorlib::tools::LeverageSearchConfig cfg;
     if (auto v = get_arg(argc, argv, "--theta_min")) cfg.theta_min = std::stod(*v);
     if (auto v = get_arg(argc, argv, "--theta_max")) cfg.theta_max = std::stod(*v);
@@ -418,11 +688,6 @@ int main(int argc, char** argv) {
 
     factorlib::tools::FactorLeverageOptimizer opt(cfg);
     factorlib::tools::KlineCsvLoader loader(data_dir);
-
-    std::optional<int64_t> start_ms;
-    std::optional<int64_t> end_ms;
-    if (auto v = get_arg(argc, argv, "--start")) start_ms = parse_date_utc_ms(*v);
-    if (auto v = get_arg(argc, argv, "--end")) end_ms = parse_date_utc_ms(*v);
 
     auto series_list = loader.load(codes, start_ms, end_ms);
     if (series_list.empty()) {
@@ -452,7 +717,9 @@ int main(int argc, char** argv) {
             std::error_code ec;
             fs::remove(summary_path, ec);
         }
+#if defined(_WIN32)
         fs::path plot_script = factor_out_dir / "plot_distribution.py";
+#endif
 
         bool any_code_processed = false;
 
@@ -577,6 +844,10 @@ int main(int argc, char** argv) {
             double sum_theta = 0.0;
             double sum_c = 0.0;
             std::size_t cnt_policy = 0;
+            double sum_xlow = 0.0;
+            double sum_xhigh = 0.0;
+            std::size_t cnt_xlow = 0;
+            std::size_t cnt_xhigh = 0;
 
             for (std::size_t t = static_cast<std::size_t>(train_window); t < ts.size(); ++t) {
                 // 每 step 天更新一次 policy（fit on [t-train_window, t)）
@@ -620,6 +891,8 @@ int main(int argc, char** argv) {
                     p.symmetry_score = pol->profile.symmetry_score;
                     p.unique_ratio = pol->profile.unique_ratio;
                     p.max_freq_ratio = pol->profile.max_freq_ratio;
+                    p.theta_raw_low = pol->theta_raw_low;
+                    p.theta_raw_high = pol->theta_raw_high;
 
                     b_raw = compute_b_raw(p.z, *pol, cfg);
                     L = finalize_leverage_like_optimizer(p.c_scale * b_raw, b_raw, cfg);
@@ -629,6 +902,14 @@ int main(int argc, char** argv) {
                     sum_theta += p.theta;
                     sum_c += p.c_scale;
                     cnt_policy += 1;
+                    if (std::isfinite(p.theta_raw_low)) {
+                        sum_xlow += p.theta_raw_low;
+                        cnt_xlow += 1;
+                    }
+                    if (std::isfinite(p.theta_raw_high)) {
+                        sum_xhigh += p.theta_raw_high;
+                        cnt_xhigh += 1;
+                    }
                 }
 
                 p.b_raw = b_raw;
@@ -678,6 +959,8 @@ int main(int argc, char** argv) {
 
             const double avg_theta = (cnt_policy > 0) ? (sum_theta / static_cast<double>(cnt_policy)) : std::numeric_limits<double>::quiet_NaN();
             const double avg_c_scale = (cnt_policy > 0) ? (sum_c / static_cast<double>(cnt_policy)) : std::numeric_limits<double>::quiet_NaN();
+            const double avg_theta_raw_low = (cnt_xlow > 0) ? (sum_xlow / static_cast<double>(cnt_xlow)) : std::numeric_limits<double>::quiet_NaN();
+            const double avg_theta_raw_high = (cnt_xhigh > 0) ? (sum_xhigh / static_cast<double>(cnt_xhigh)) : std::numeric_limits<double>::quiet_NaN();
 
             fs::path csv_path = factor_out_dir / ("leverage_" + code + "_" + factor_name + ".csv");
             write_wf_csv(csv_path, wf_pts, code, factor_name);
@@ -689,32 +972,54 @@ int main(int argc, char** argv) {
                               avg_theta, avg_c_scale);
 
             fs::path dist_png = factor_out_dir / ("distribution_" + code + "_" + factor_name + ".png");
-            std::string plot_title = factor_name + " | " + code;
-            std::ostringstream theta_stream;
-            theta_stream << "walk-forward train=" << train_window
-                         << ", step=" << step
-                         << ", zwin=" << zwin;
-            std::string theta_label = theta_stream.str();
-            std::ostringstream score_stream;
-            score_stream << std::fixed << std::setprecision(4)
-                         << "oos_score=" << oos_score;
-            std::string score_label = score_stream.str();
-            std::ostringstream baseline_stream;
-            baseline_stream << std::fixed << std::setprecision(4)
-                            << "oos_baseline=" << oos_baseline_score;
-            std::string baseline_label = baseline_stream.str();
-            if (!run_triple_hist_plot(plot_script,
-                                      csv_path,
-                                      dist_png,
-                                      plot_title,
-                                      "factor_raw",
-                                      "b_raw",
-                                      "leverage",
-                                      theta_label,
-                                      score_label,
-                                      baseline_label)) {
-                std::cerr << "[" << factor_name << "] 绘制分布图失败: " << dist_png << std::endl;
+
+            const bool should_plot = std::isfinite(oos_score) &&
+                                     std::isfinite(oos_baseline_score) &&
+                                     (oos_score >= oos_baseline_score);
+#if defined(_WIN32)
+            if (should_plot) {
+                std::string plot_title = factor_name + " | " + code;
+                std::ostringstream theta_stream;
+                theta_stream << "walk-forward train=" << train_window
+                             << ", step=" << step
+                             << ", zwin=" << zwin
+                             << ", theta_z_avg=" << avg_theta;
+                if (std::isfinite(avg_theta_raw_high)) {
+                    theta_stream << ", x_high_avg=" << avg_theta_raw_high;
+                }
+                if (std::isfinite(avg_theta_raw_low)) {
+                    theta_stream << ", x_low_avg=" << avg_theta_raw_low;
+                }
+                std::string theta_label = theta_stream.str();
+                std::ostringstream score_stream;
+                score_stream << std::fixed << std::setprecision(4)
+                             << "oos_score=" << oos_score;
+                std::string score_label = score_stream.str();
+                std::ostringstream baseline_stream;
+                baseline_stream << std::fixed << std::setprecision(4)
+                                << "oos_baseline=" << oos_baseline_score;
+                std::string baseline_label = baseline_stream.str();
+                if (!run_triple_hist_plot(plot_script,
+                                          csv_path,
+                                          dist_png,
+                                          plot_title,
+                                          "factor_raw",
+                                          "b_raw",
+                                          "leverage",
+                                          theta_label,
+                                          score_label,
+                                          baseline_label)) {
+                    std::cerr << "[" << factor_name << "] 绘制分布图失败: " << dist_png << std::endl;
+                }
+            } else {
+                // 清理旧图，保证“只输出 oos_score >= baseline 的图表”
+                std::error_code ec;
+                fs::remove(dist_png, ec);
             }
+#else
+            (void)should_plot;
+            // Linux: no plots
+#endif
 
             std::cout << "[" << factor_name << "] OK " << code
                       << " oos_score=" << oos_score
