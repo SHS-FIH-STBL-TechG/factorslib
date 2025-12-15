@@ -22,8 +22,7 @@ option(FACTORLIB_ENABLE_TRACE_DEBUG "Compile TRACE/DEBUG logs" OFF)
 option(FACTORLIB_BUILD_UNIT_TESTS "Build factorlib unit tests " ON)
 option(FACTORLIB_BUILD_MATH_TESTS "Build math_tests unit tests" OFF)
 option(FACTORLIB_ENABLE_PARALLEL_INGRESS "Dispatch ingress events to factors in parallel" OFF)
-option(FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS "Generate PNG plots in factor_leverage_tool" ON)
-option(FACTORLIB_BUILD_LEGACY_TOOLS "Build legacy tools under src/tools (deprecated)" OFF)
+option(FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS "Generate PNG plots in factor_leverage_tool_new" ON)
 set(_factorlib_perfetto_default ON)
 if (FACTORLIB_ON_WINDOWS_MINGW)
     set(_factorlib_perfetto_default OFF)
@@ -333,29 +332,13 @@ add_library(factor_basic
         src/factors/Kline/low_freq_return_factor.cpp
         src/factors/Kline/volume_ar_forecast_factor.cpp
         src/factors/Kline/high_volume_remaining_factor.cpp
+        src/factors/Kline/kalman_forecast_z_factor.cpp
 )
 
 target_link_libraries(factor_basic PUBLIC factorlib_utils)
 target_include_directories(factor_basic PUBLIC
         ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
 )
-
-if (FACTORLIB_BUILD_LEGACY_TOOLS)
-    add_executable(factor_leverage_tool
-            src/tools/factor_leverage_transformer.cpp
-            src/tools/kline_csv_loader.cpp
-            src/tools/factor_tool_config.cpp
-    )
-    target_link_libraries(factor_leverage_tool PRIVATE factor_basic factorlib_utils)
-    target_include_directories(factor_leverage_tool PRIVATE
-            ${FACTORLIB_INTERFACE_INCLUDE_DIRS}
-    )
-    if (FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS)
-        target_compile_definitions(factor_leverage_tool PRIVATE FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS=1)
-    else()
-        target_compile_definitions(factor_leverage_tool PRIVATE FACTORLIB_ENABLE_FACTOR_LEVERAGE_PLOTS=0)
-    endif()
-endif()
 
 # New intuitive leverage tool
 add_executable(factor_leverage_tool_new

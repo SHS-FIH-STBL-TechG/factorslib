@@ -1,6 +1,7 @@
 #include "factor_leverage_optimizer.h"
 #include "factor_leverage_tool_config.h"
 #include "kline_csv_loader.h"
+#include "sliding_gaussian_leverage.h"
 
 #include "core/databus.h"
 #include "core/types.h"
@@ -111,11 +112,82 @@ std::vector<RetPoint> compute_next_returns(const std::vector<factorlib::Bar>& ba
     return out;
 }
 
-void write_csv(const fs::path& path,
-               const std::vector<factorlib::tools::LeveragePoint>& pts,
-               const factorlib::tools::ThresholdSearchResult& best,
-               const std::string& code,
-               const std::string& factor_key) {
+struct WfPoint {
+    int64_t ts_ms = 0;
+    double x_raw = std::numeric_limits<double>::quiet_NaN();
+    double z = std::numeric_limits<double>::quiet_NaN();
+    // policy (fit on trailing window)
+    factorlib::tools::TradeMode mode = factorlib::tools::TradeMode::BothSides;
+    int polarity = +1;
+    double theta = 0.0;
+    double z_cap = 0.0;
+    double c_scale = 0.0;
+    // action
+    double b_raw = 0.0;
+    double leverage = 0.0;
+    // realized
+    double ret = 0.0;
+    double equity = 1.0;
+    double drawdown = 0.0;
+    bool active = false;
+    // diagnostics from training window
+    factorlib::tools::FactorDistributionKind profile_kind = factorlib::tools::FactorDistributionKind::DiscreteOrNonContinuous;
+    double symmetry_score = std::numeric_limits<double>::quiet_NaN();
+    double unique_ratio = std::numeric_limits<double>::quiet_NaN();
+    double max_freq_ratio = std::numeric_limits<double>::quiet_NaN();
+};
+
+double compute_b_raw(double zv,
+                     const factorlib::tools::ThresholdSearchResult& best,
+                     const factorlib::tools::LeverageSearchConfig& cfg) {
+    bool active = false;
+    int sgn = 0;
+
+    // 注意：zv 为 NaN 时，所有比较为 false => active=false => 返回 0 (空仓)
+    if (best.mode == factorlib::tools::TradeMode::BothSides) {
+        if (std::abs(zv) > best.theta) {
+            active = true;
+            sgn = (zv > 0) ? +1 : -1;
+        }
+    } else if (best.mode == factorlib::tools::TradeMode::PositiveOnly) {
+        if (zv > best.theta) {
+            active = true;
+            sgn = +1;
+        }
+    } else {
+        if (zv < -best.theta) {
+            active = true;
+            sgn = -1;
+        }
+    }
+    if (!active) return 0.0;
+
+    double z_cap = std::max(best.z_cap, best.theta + 1e-3);
+    double a = std::abs(zv);
+    double frac = (z_cap > best.theta) ? (a - best.theta) / (z_cap - best.theta) : 0.0;
+    frac = std::clamp(frac, 0.0, 1.0);
+    double mag = 1.0 + frac * (cfg.max_leverage - 1.0);
+    return static_cast<double>(best.polarity * sgn) * mag;
+}
+
+// Same behavior as FactorLeverageOptimizer::finalize_leverage (but that method is private).
+// We duplicate it here to keep this tool self-contained and compilable.
+static inline double finalize_leverage_like_optimizer(double leverage,
+                                                     double raw_signal,
+                                                     const factorlib::tools::LeverageSearchConfig& cfg) {
+    // Only max leverage clamp; do NOT force |L| >= 1.
+    if (raw_signal == 0.0 || !std::isfinite(raw_signal)) {
+        return 0.0;
+    }
+    if (leverage > cfg.max_leverage) leverage = cfg.max_leverage;
+    if (leverage < -cfg.max_leverage) leverage = -cfg.max_leverage;
+    return leverage;
+}
+
+void write_wf_csv(const fs::path& path,
+                  const std::vector<WfPoint>& pts,
+                  const std::string& code,
+                  const std::string& factor_key) {
     std::ofstream out(path);
     out << "date,code,factor,factor_raw,z,mode,polarity,theta,z_cap,c_scale,b_raw,leverage,next_return,equity,drawdown,active,profile_kind,symmetry_score,unique_ratio,max_freq_ratio\n";
     auto kind_to_str = [](factorlib::tools::FactorDistributionKind k) {
@@ -139,69 +211,57 @@ void write_csv(const fs::path& path,
             << factor_key << ","
             << p.x_raw << ","
             << p.z << ","
-            << mode_to_str(best.mode) << ","
-            << best.polarity << ","
-            << best.theta << ","
-            << best.z_cap << ","
-            << best.c_scale << ","
+            << mode_to_str(p.mode) << ","
+            << p.polarity << ","
+            << p.theta << ","
+            << p.z_cap << ","
+            << p.c_scale << ","
             << p.b_raw << ","
             << p.leverage << ","
             << p.ret << ","
             << p.equity << ","
             << p.drawdown << ","
             << (p.active ? 1 : 0) << ","
-            << kind_to_str(best.profile.kind) << ","
-            << best.profile.symmetry_score << ","
-            << best.profile.unique_ratio << ","
-            << best.profile.max_freq_ratio
+            << kind_to_str(p.profile_kind) << ","
+            << p.symmetry_score << ","
+            << p.unique_ratio << ","
+            << p.max_freq_ratio
             << "\n";
     }
 }
 
-void append_summary(const fs::path& path,
-                    const factorlib::tools::ThresholdSearchResult& best,
-                    const std::string& code,
-                    const std::string& factor_key) {
+void append_wf_summary(const fs::path& path,
+                       const std::string& code,
+                       const std::string& factor_key,
+                       int train_window,
+                       int step,
+                       std::size_t zwin,
+                       double oos_score,
+                       double oos_baseline_score,
+                       double final_equity,
+                       double dd_rms,
+                       std::size_t trade_days,
+                       std::size_t T_oos_days,
+                       double avg_theta,
+                       double avg_c_scale) {
     const bool exists = fs::exists(path);
     std::ofstream out(path, std::ios::app);
     if (!exists) {
-        out << "code,factor,score,baseline_score,theta,mode,polarity,c_scale,z_cap,final_equity,dd_rms,trade_days,D_sample_days,T_trade_days,profile_kind,symmetry_score,unique_ratio,max_freq_ratio,raw_threshold_low,raw_threshold_high\n\n";
+        out << "code,factor,oos_score,oos_baseline_score,train_window,step,zwin,final_equity,dd_rms,trade_days,T_oos_days,avg_theta,avg_c_scale\n";
     }
-    auto kind_to_str = [](factorlib::tools::FactorDistributionKind k) {
-        switch (k) {
-            case factorlib::tools::FactorDistributionKind::SymmetricContinuous: return "symmetric";
-            case factorlib::tools::FactorDistributionKind::Asymmetric: return "asymmetric";
-            default: return "discrete";
-        }
-    };
-    auto mode_to_str = [](factorlib::tools::TradeMode m) {
-        switch (m) {
-            case factorlib::tools::TradeMode::BothSides: return "both";
-            case factorlib::tools::TradeMode::PositiveOnly: return "pos_only";
-            default: return "neg_only";
-        }
-    };
-
     out << code << ","
         << factor_key << ","
-        << best.score << ","
-        << best.baseline_score << ","
-        << best.theta << ","
-        << mode_to_str(best.mode) << ","
-        << best.polarity << ","
-        << best.c_scale << ","
-        << best.z_cap << ","
-        << best.final_equity << ","
-        << best.dd_rms << ","
-        << best.trade_days << ","
-        << best.D_sample_days << ","
-        << best.T_trade_days << ","
-        << kind_to_str(best.profile.kind) << ","
-        << best.profile.symmetry_score << ","
-        << best.profile.unique_ratio << ","
-        << best.profile.max_freq_ratio << ","
-        << best.theta_raw_low << ","
-        << best.theta_raw_high
+        << oos_score << ","
+        << oos_baseline_score << ","
+        << train_window << ","
+        << step << ","
+        << zwin << ","
+        << final_equity << ","
+        << dd_rms << ","
+        << trade_days << ","
+        << T_oos_days << ","
+        << avg_theta << ","
+        << avg_c_scale
         << "\n";
 }
 
@@ -249,7 +309,7 @@ def plot_hist(ax, values, title):
     ax.grid(alpha=0.3)
 
 def main():
-    # argv: data.csv out.png title factor_col b_col leverage_col theta_text
+    # argv: data.csv out.png title factor_col b_col leverage_col theta_text score_text baseline_text
     if len(sys.argv) < 10:
         print("Usage: python plot_triple_hist.py data.csv output.png title factor_col b_col leverage_col theta_text score_text baseline_text")
         return 1
@@ -316,7 +376,8 @@ int main(int argc, char** argv) {
             << "    [--start YYYY-MM-DD] [--end YYYY-MM-DD] \\\n"
             << "    [--out_dir DIR]                 (default output/factor_leverage) \\\n"
             << "    [--theta_min 0] [--theta_max 2.5] [--theta_step 0.05] \\\n"
-            << "    [--D 250] [--max_leverage 2]\n";
+            << "    [--D 250] [--max_leverage 2] \\\n"
+            << "    [--train 252] [--step 1] [--zwin 250]\n";
         return 0;
     }
 
@@ -349,6 +410,11 @@ int main(int argc, char** argv) {
     bool D_overridden = false;
     if (auto v = get_arg(argc, argv, "--D")) { cfg.D = std::stoi(*v); D_overridden = true; }
     if (auto v = get_arg(argc, argv, "--max_leverage")) cfg.max_leverage = std::stod(*v);
+
+    // walk-forward (no-leak) settings
+    const int train_window = std::max(20, std::stoi(get_arg(argc, argv, "--train").value_or("252")));
+    const int step = std::max(1, std::stoi(get_arg(argc, argv, "--step").value_or("1")));
+    const std::size_t zwin = static_cast<std::size_t>(std::max(5, std::stoi(get_arg(argc, argv, "--zwin").value_or("250"))));
 
     factorlib::tools::FactorLeverageOptimizer opt(cfg);
     factorlib::tools::KlineCsvLoader loader(data_dir);
@@ -393,6 +459,7 @@ int main(int argc, char** argv) {
         for (const auto& series : series_list) {
             const std::string& code = series.code;
             auto bars = series.bars;
+
             // D 用于样本裁剪：若指定 --D，则仅使用最近 D 天；若 D > 样本长度则兜底为样本长度。
             const int desired_D_days =
                 (D_overridden && cfg.D > 0) ? cfg.D : static_cast<int>(bars.size());
@@ -407,16 +474,21 @@ int main(int argc, char** argv) {
                 continue;
             }
 
+            // === 全日历评估：以 returns 为主轴（不再按 factor_pts 对齐后 continue 删日历） ===
             auto rets = compute_next_returns(bars);
-            // D_sample_days 取裁剪后的原始样本天数，用于风险对齐与年均交易日约束。
-            int D_sample_days = effective_D_days;
             if (rets.size() < 5) {
                 std::cerr << "[" << factor_name << "] skip " << code << " (too few returns)\n";
                 continue;
             }
-            std::unordered_map<int64_t, double> ret_by_ts;
-            ret_by_ts.reserve(rets.size() * 2);
-            for (const auto& rp : rets) ret_by_ts[rp.ts_ms] = rp.r;
+
+            std::vector<int64_t> ts;
+            std::vector<double> next_ret;
+            ts.reserve(rets.size());
+            next_ret.reserve(rets.size());
+            for (const auto& rp : rets) {
+                ts.push_back(rp.ts_ms);
+                next_ret.push_back(rp.r);
+            }
 
             std::mutex mtx;
             std::vector<std::pair<int64_t, double>> factor_pts;
@@ -425,9 +497,9 @@ int main(int argc, char** argv) {
             factorlib::DataBus::instance().subscribe<double>(
                 binding.input_topic,
                 code,
-                [&mtx, &factor_pts](const std::string&, int64_t ts, const double& v) {
+                [&mtx, &factor_pts](const std::string&, int64_t ts_ms, const double& v) {
                     std::lock_guard<std::mutex> lk(mtx);
-                    factor_pts.emplace_back(ts, v);
+                    factor_pts.emplace_back(ts_ms, v);
                 });
 
             auto factor = binding.create({code});
@@ -440,124 +512,216 @@ int main(int argc, char** argv) {
                 factor->force_flush(b.instrument_id);
             }
 
-            std::vector<int64_t> ts;
-            std::vector<double> x_raw;
-            std::vector<double> next_ret;
-
+            // === 全日历回填 x_raw：缺失日 NaN（后续 => z=NaN => b=0 => 空仓） ===
+            std::vector<double> x_raw(ts.size(), std::numeric_limits<double>::quiet_NaN());
             {
                 std::lock_guard<std::mutex> lk(mtx);
                 std::sort(factor_pts.begin(), factor_pts.end(),
                           [](const auto& a, const auto& b) { return a.first < b.first; });
             }
 
+            std::unordered_map<int64_t, double> factor_by_ts;
             {
                 std::lock_guard<std::mutex> lk(mtx);
+                factor_by_ts.reserve(factor_pts.size() * 2);
                 for (const auto& [t, x] : factor_pts) {
-                    auto it = ret_by_ts.find(t);
-                    if (it == ret_by_ts.end()) continue;
-                    if (!std::isfinite(x)) continue;
-                    ts.push_back(t);
-                    x_raw.push_back(x);
-                    next_ret.push_back(it->second);
+                    if (std::isfinite(x)) factor_by_ts[t] = x;
                 }
             }
 
-            if (ts.size() < 30) {
-                std::cerr << "[" << factor_name << "] skip " << code << " (aligned samples < 30)\n";
+            int finite_cnt = 0;
+            for (std::size_t i = 0; i < ts.size(); ++i) {
+                auto it = factor_by_ts.find(ts[i]);
+                if (it != factor_by_ts.end()) {
+                    x_raw[i] = it->second;
+                    if (std::isfinite(x_raw[i])) finite_cnt += 1;
+                }
+            }
+
+            if (finite_cnt < 30) {
+                std::cerr << "[" << factor_name << "] skip " << code << " (finite factor samples < 30)\n";
                 continue;
             }
 
-            auto profile = opt.analyze_profile(x_raw);
-            std::vector<double> centered;
-            centered.reserve(x_raw.size());
-            for (double v : x_raw) centered.push_back(v - profile.median);
-            auto z = opt.rank_normalize_to_z(centered);
-
-            std::vector<double> full_next_ret;
-            full_next_ret.reserve(rets.size());
-            for (const auto& rp : rets) full_next_ret.push_back(rp.r);
-
-            auto best = opt.search_best_threshold(ts, x_raw, z, next_ret, full_next_ret, D_sample_days);
-            if (!best.ok) {
-                std::cerr << "[" << factor_name << "] no valid threshold for " << code << "\n";
-                std::vector<factorlib::tools::LeveragePoint> placeholder;
-                placeholder.reserve(ts.size());
-                for (std::size_t i = 0; i < ts.size(); ++i) {
-                    factorlib::tools::LeveragePoint p;
-                    p.ts_ms = ts[i];
-                    p.x_raw = x_raw[i];
-                    p.z = z[i];
-                    p.ret = next_ret[i];
-                    placeholder.push_back(p);
+            // --- leakage-free z: online sliding rank->Gaussian
+            // 缺失日（x_raw 为 NaN）不更新窗口，z 也置 NaN；交易端会自然变成空仓
+            factorlib::tools::SlidingGaussianLeverage zg(zwin);
+            std::vector<double> z;
+            z.reserve(x_raw.size());
+            for (double v : x_raw) {
+                if (!std::isfinite(v)) {
+                    z.push_back(std::numeric_limits<double>::quiet_NaN());
+                    continue;
                 }
-                factorlib::tools::ThresholdSearchResult dummy;
-                dummy.ok = false;
-                dummy.theta = std::numeric_limits<double>::quiet_NaN();
-                dummy.c_scale = 0.0;
-                dummy.z_cap = std::numeric_limits<double>::quiet_NaN();
-                fs::path csv_path = factor_out_dir / ("leverage_" + code + "_" + factor_name + ".csv");
-                write_csv(csv_path, placeholder, dummy, code, factor_name);
-                fs::path dist_png = factor_out_dir / ("distribution_" + code + "_" + factor_name + ".png");
-                if (!run_triple_hist_plot(plot_script,
-                                        csv_path,
-                                        dist_png,
-                                        factor_name + " | " + code,
-                                        "factor_raw",
-                                        "b_raw",
-                                        "leverage",
-                                        "NaN",
-                                        "score=NaN",
-                                        "baseline=NaN")) {
-                    std::cerr << "[" << factor_name << "] 绘制分布图失败: " << dist_png << std::endl;
-                }
+                auto zo = zg.transform(v);
+                z.push_back(zo.has_value() ? *zo : std::numeric_limits<double>::quiet_NaN());
+            }
+
+            if (static_cast<int>(ts.size()) <= train_window + 5) {
+                std::cerr << "[" << factor_name << "] skip " << code
+                          << " (samples too short for train=" << train_window << ")\n";
                 continue;
             }
 
-            auto pts = opt.build_leverage_series(ts, x_raw, z, next_ret, D_sample_days, best);
+            // --- walk-forward: fit params on trailing window, evaluate EVERY day (full calendar)
+            std::vector<WfPoint> wf_pts;
+            wf_pts.reserve(ts.size() - static_cast<std::size_t>(train_window));
+
+            std::optional<factorlib::tools::ThresholdSearchResult> last_good;
+
+            double E = 1.0;
+            double peak = 1.0;
+            double sum_dd2 = 0.0;
+            std::size_t trade_days = 0;
+
+            double sum_theta = 0.0;
+            double sum_c = 0.0;
+            std::size_t cnt_policy = 0;
+
+            for (std::size_t t = static_cast<std::size_t>(train_window); t < ts.size(); ++t) {
+                // 每 step 天更新一次 policy（fit on [t-train_window, t)）
+                if (((t - static_cast<std::size_t>(train_window)) % static_cast<std::size_t>(step)) == 0) {
+                    const std::size_t s = t - static_cast<std::size_t>(train_window);
+                    const std::size_t e = t;
+
+                    std::vector<int64_t> ts_tr(ts.begin() + static_cast<std::ptrdiff_t>(s), ts.begin() + static_cast<std::ptrdiff_t>(e));
+                    std::vector<double>  x_tr (x_raw.begin() + static_cast<std::ptrdiff_t>(s), x_raw.begin() + static_cast<std::ptrdiff_t>(e));
+                    std::vector<double>  z_tr (z.begin() + static_cast<std::ptrdiff_t>(s), z.begin() + static_cast<std::ptrdiff_t>(e));
+                    std::vector<double>  r_tr (next_ret.begin() + static_cast<std::ptrdiff_t>(s), next_ret.begin() + static_cast<std::ptrdiff_t>(e));
+
+                    // baseline within the same train window
+                    std::vector<double> full_tr = r_tr;
+                    const int D_eff = static_cast<int>(r_tr.size());
+
+                    auto best = opt.search_best_threshold(ts_tr, x_tr, z_tr, r_tr, full_tr, D_eff);
+                    if (best.ok) {
+                        last_good = best;
+                    }
+                }
+
+                const factorlib::tools::ThresholdSearchResult* pol = last_good ? &(*last_good) : nullptr;
+
+                WfPoint p;
+                p.ts_ms = ts[t];
+                p.x_raw = x_raw[t];
+                p.z = z[t];
+                p.ret = next_ret[t];
+
+                double b_raw = 0.0;
+                double L = 0.0;
+
+                if (pol) {
+                    p.mode = pol->mode;
+                    p.polarity = pol->polarity;
+                    p.theta = pol->theta;
+                    p.z_cap = pol->z_cap;
+                    p.c_scale = pol->c_scale;
+                    p.profile_kind = pol->profile.kind;
+                    p.symmetry_score = pol->profile.symmetry_score;
+                    p.unique_ratio = pol->profile.unique_ratio;
+                    p.max_freq_ratio = pol->profile.max_freq_ratio;
+
+                    b_raw = compute_b_raw(p.z, *pol, cfg);
+                    L = finalize_leverage_like_optimizer(p.c_scale * b_raw, b_raw, cfg);
+                    p.active = (b_raw != 0.0);
+
+                    // 统计策略参数均值（按“评估日历”计数）
+                    sum_theta += p.theta;
+                    sum_c += p.c_scale;
+                    cnt_policy += 1;
+                }
+
+                p.b_raw = b_raw;
+                p.leverage = L;
+
+                // === 全日历累计：空仓日 L=0 => term=1；但 drawdown 可能持续 ===
+                const double term = 1.0 + L * p.ret;
+                if (term > 0.0 && std::isfinite(term)) {
+                    E *= term;
+                }
+                p.equity = E;
+                if (E > peak) peak = E;
+                p.drawdown = (peak > 0.0) ? (peak - E) / peak : 0.0;
+
+                sum_dd2 += p.drawdown * p.drawdown;
+                if (p.active) trade_days += 1;
+
+                wf_pts.push_back(p);
+            }
+
+            if (wf_pts.size() < 20) {
+                std::cerr << "[" << factor_name << "] skip " << code << " (oos points < 20)\n";
+                continue;
+            }
+
+            const double D_oos = static_cast<double>(wf_pts.size());
+            const double dd_rms = std::sqrt(sum_dd2 / std::max(1.0, D_oos));
+            const double oos_score = (dd_rms > 1e-12 && std::isfinite(dd_rms))
+                ? ((E - 1.0) / dd_rms)
+                : std::numeric_limits<double>::quiet_NaN();
+
+            // baseline (1x hold) on the same oos slice (full calendar within OOS)
+            double E_base = 1.0;
+            double peak_base = 1.0;
+            double sum_dd2_base = 0.0;
+            for (const auto& pp : wf_pts) {
+                const double term = 1.0 + pp.ret;
+                if (term > 0.0 && std::isfinite(term)) E_base *= term;
+                if (E_base > peak_base) peak_base = E_base;
+                const double dd = (peak_base > 0.0) ? (peak_base - E_base) / peak_base : 0.0;
+                sum_dd2_base += dd * dd;
+            }
+            const double dd_rms_base = std::sqrt(sum_dd2_base / std::max(1.0, D_oos));
+            const double oos_baseline_score = (dd_rms_base > 1e-12 && std::isfinite(dd_rms_base))
+                ? ((E_base - 1.0) / dd_rms_base)
+                : std::numeric_limits<double>::quiet_NaN();
+
+            const double avg_theta = (cnt_policy > 0) ? (sum_theta / static_cast<double>(cnt_policy)) : std::numeric_limits<double>::quiet_NaN();
+            const double avg_c_scale = (cnt_policy > 0) ? (sum_c / static_cast<double>(cnt_policy)) : std::numeric_limits<double>::quiet_NaN();
 
             fs::path csv_path = factor_out_dir / ("leverage_" + code + "_" + factor_name + ".csv");
-            write_csv(csv_path, pts, best, code, factor_name);
-            append_summary(summary_path, best, code, factor_name);
+            write_wf_csv(csv_path, wf_pts, code, factor_name);
+
+            append_wf_summary(summary_path, code, factor_name,
+                              train_window, step, zwin,
+                              oos_score, oos_baseline_score,
+                              E, dd_rms, trade_days, wf_pts.size(),
+                              avg_theta, avg_c_scale);
 
             fs::path dist_png = factor_out_dir / ("distribution_" + code + "_" + factor_name + ".png");
             std::string plot_title = factor_name + " | " + code;
             std::ostringstream theta_stream;
-            theta_stream << std::fixed << std::setprecision(4)
-                         << "z=" << best.theta;
-            if (!std::isnan(best.theta_raw_high)) {
-                theta_stream << ", x_high=" << best.theta_raw_high;
-            }
-            if (!std::isnan(best.theta_raw_low)) {
-                theta_stream << ", x_low=" << best.theta_raw_low;
-            }
+            theta_stream << "walk-forward train=" << train_window
+                         << ", step=" << step
+                         << ", zwin=" << zwin;
             std::string theta_label = theta_stream.str();
             std::ostringstream score_stream;
             score_stream << std::fixed << std::setprecision(4)
-                         << "score=" << best.score;
+                         << "oos_score=" << oos_score;
             std::string score_label = score_stream.str();
             std::ostringstream baseline_stream;
             baseline_stream << std::fixed << std::setprecision(4)
-                            << "baseline=" << best.baseline_score;
+                            << "oos_baseline=" << oos_baseline_score;
             std::string baseline_label = baseline_stream.str();
             if (!run_triple_hist_plot(plot_script,
-                                    csv_path,
-                                    dist_png,
-                                    plot_title,
-                                    "factor_raw",
-                                    "b_raw",
-                                    "leverage",
-                                    theta_label,
-                                    score_label,
-                                    baseline_label)) {
+                                      csv_path,
+                                      dist_png,
+                                      plot_title,
+                                      "factor_raw",
+                                      "b_raw",
+                                      "leverage",
+                                      theta_label,
+                                      score_label,
+                                      baseline_label)) {
                 std::cerr << "[" << factor_name << "] 绘制分布图失败: " << dist_png << std::endl;
             }
 
             std::cout << "[" << factor_name << "] OK " << code
-                      << " score=" << best.score
-                      << " theta=" << best.theta
-                      << " c=" << best.c_scale
-                      << " mode=" << static_cast<int>(best.mode)
-                      << " polarity=" << best.polarity
+                      << " oos_score=" << oos_score
+                      << " oos_baseline=" << oos_baseline_score
+                      << " train=" << train_window
+                      << " step=" << step
+                      << " zwin=" << zwin
                       << "\n";
             any_code_processed = true;
         }

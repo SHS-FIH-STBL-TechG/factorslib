@@ -5,6 +5,7 @@
 #include "factors/kline/high_volume_remaining_factor.h"
 #include "factors/kline/volume_ar_forecast_factor.h"
 #include "factors/kline/volume_price_structure_factor.h"
+#include "factors/kline/kalman_forecast_z_factor.h"
 
 #include <utility>
 
@@ -74,6 +75,14 @@ const std::vector<FactorBinding>& GetFactorBindings() {
                 return MakeBarOnlyFactor<factorlib::VolumePriceStructureFactor>(codes);
             }
         },
+        {
+            "kalman_forecast_z",
+            "kline/kalman_forecast_z",
+            [](std::size_t cap) { factorlib::KalmanForecastZFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<factorlib::KalmanForecastZFactor>(codes);
+            }
+        },
     };
     return bindings;
 }
@@ -94,4 +103,3 @@ std::string DefaultOutputDir() {
 }
 
 } // namespace factorlib::tools
-

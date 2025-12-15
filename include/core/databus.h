@@ -31,6 +31,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <functional>
+#include <algorithm>
 #include <iostream>
 #include <ostream>
 #include <shared_mutex>
@@ -53,6 +54,15 @@ namespace factorlib {
 
 class DataBus {
 public:
+    struct SubscriptionHandle {
+        std::string topic;
+        std::string code_key;
+        std::size_t id = 0;
+        std::type_index type = std::type_index(typeid(void));
+
+        explicit operator bool() const { return id != 0; }
+    };
+
     /**
      * @brief 获取 DataBus 的全局单例。
      * @return 进程内唯一实例；线程安全地延迟初始化。
@@ -131,6 +141,21 @@ public:
     void subscribe(const std::string& topic, const std::string& code,
                    std::function<void(const std::string&, int64_t, const T&)> cb);
 
+    /**
+     * @brief 注册订阅回调并返回可取消订阅的句柄。
+     * @note 取消订阅使用 unsubscribe(handle)。
+     */
+    template<typename T>
+    SubscriptionHandle subscribe_handle(const std::string& topic,
+                                        const std::string& code,
+                                        std::function<void(const std::string&, int64_t, const T&)> cb);
+
+    /**
+     * @brief 取消订阅（句柄无效/已取消则静默忽略）。
+     * @return 成功取消返回 true，否则 false。
+     */
+    bool unsubscribe(const SubscriptionHandle& handle);
+
     // ---------- 阻塞等待（A 等 B） ----------
 
      /**
@@ -163,7 +188,10 @@ public:
         _topics.clear();
     }
 private:
-    struct ChannelBase { virtual ~ChannelBase()=default; };
+    struct ChannelBase {
+        virtual ~ChannelBase()=default;
+        virtual bool remove_subscriber(const std::string& key, std::size_t id) = 0;
+    };
 
     /**
      * @brief 单个 topic 对应的具体类型通道：维护每个 code 的历史、订阅者与条件变量。
@@ -183,8 +211,13 @@ private:
         /// @brief 历史存储：按 code 分桶的队列，元素为 (时间戳, 值)；按时间递增插入。
         std::unordered_map<std::string, std::deque<std::pair<int64_t, T>>> store;
 
+        struct Subscriber {
+            std::size_t id = 0;
+            std::function<void(const std::string&, int64_t, const T&)> cb;
+        };
+
         /// @brief 订阅回调表：按 code 维护回调列表；publish 时在锁内按注册顺序逐个调用。
-        std::unordered_map<std::string, std::vector<std::function<void(const std::string&, int64_t, const T&)>>> subs;
+        std::unordered_map<std::string, std::vector<Subscriber>> subs;
 
         /// @brief 条件变量表：按 code 维护；用于 wait_* 阻塞等待与 publish 唤醒。
         std::unordered_map<std::string, std::condition_variable> cvs;
@@ -216,8 +249,10 @@ private:
                 cvs[key].notify_all();
                 auto it = subs.find(key);
                 if (it != subs.end()) {
-                    for (auto& f : it->second) {
-                        f(code, ts, v);
+                    for (auto& sub : it->second) {
+                        if (sub.cb) {
+                            sub.cb(code, ts, v);
+                        }
                     }
                 }
             };
@@ -227,6 +262,21 @@ private:
             if (!base.empty()) {
                 notify(base);
             }
+        }
+
+        bool remove_subscriber(const std::string& key, std::size_t id) override {
+            if (key.empty() || id == 0) return false;
+            auto it = subs.find(key);
+            if (it == subs.end()) return false;
+            auto& v = it->second;
+            auto new_end = std::remove_if(v.begin(), v.end(),
+                                         [id](const Subscriber& s) { return s.id == id; });
+            bool removed = (new_end != v.end());
+            v.erase(new_end, v.end());
+            if (v.empty()) {
+                subs.erase(it);
+            }
+            return removed;
         }
 
         // 当调用方只传“纯 code”时，尝试匹配以 code 为前缀的 scope key，确保老逻辑仍能取到数据
@@ -252,6 +302,7 @@ private:
     DataBus& operator=(const DataBus&)=delete;
 
     mutable std::mutex _m;
+    std::size_t _next_subscriber_id = 1;
 
     /// @brief 主题注册表：topic → (绑定类型信息, 通道实例指针)；通过 type_index 保证类型一致性。
     std::unordered_map<std::string, std::pair<std::type_index, std::unique_ptr<ChannelBase>>> _topics;
@@ -360,7 +411,44 @@ void DataBus::subscribe(const std::string& topic, const std::string& code,
     if(!ch) return;
     auto key = ch->resolve_code_key(code);
     if (key.empty()) key = code;
-    ch->subs[key].push_back(std::move(cb));
+    typename DataBus::Channel<T>::Subscriber sub;
+    sub.id = _next_subscriber_id++;
+    sub.cb = std::move(cb);
+    ch->subs[key].push_back(std::move(sub));
+}
+
+template<typename T>
+DataBus::SubscriptionHandle DataBus::subscribe_handle(const std::string& topic,
+                                                      const std::string& code,
+                                                      std::function<void(const std::string&, int64_t, const T&)> cb) {
+    std::lock_guard<std::mutex> lk(_m);
+    auto ch = get_channel<T>(topic);
+    if (!ch) return {};
+    auto key = ch->resolve_code_key(code);
+    if (key.empty()) key = code;
+
+    typename DataBus::Channel<T>::Subscriber sub;
+    sub.id = _next_subscriber_id++;
+    sub.cb = std::move(cb);
+    const std::size_t sub_id = sub.id;
+    ch->subs[key].push_back(std::move(sub));
+
+    SubscriptionHandle h;
+    h.topic = topic;
+    h.code_key = key;
+    h.id = sub_id;
+    h.type = std::type_index(typeid(T));
+    return h;
+}
+
+inline bool DataBus::unsubscribe(const SubscriptionHandle& handle) {
+    if (!handle) return false;
+    std::lock_guard<std::mutex> lk(_m);
+    auto it = _topics.find(handle.topic);
+    if (it == _topics.end()) return false;
+    if (it->second.first != handle.type) return false;
+    if (!it->second.second) return false;
+    return it->second.second->remove_subscriber(handle.code_key, handle.id);
 }
 
 /// @brief 阻塞等待“时间戳恰好等于 ts_ms”的记录。

@@ -1,7 +1,9 @@
 #pragma once
 
+#include "core/databus.h"
 #include "sliding_gaussian_leverage.h"
 
+#include <atomic>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -34,7 +36,7 @@ public:
 
     void start();
     void stop();
-    bool running() const { return _running; }
+    bool running() const { return _running.load(std::memory_order_acquire); }
 
     std::optional<SlidingGaussianLeverage::DistributionSnapshot> stats(
         const std::string& input_topic,
@@ -74,10 +76,10 @@ private:
     mutable std::mutex _queue_mtx;
     std::condition_variable _queue_cv;
     std::deque<Event> _queue;
-    bool _running = false;
-    bool _stop_requested = false;
+    std::atomic<bool> _running{false};
+    std::atomic<bool> _stop_requested{false};
     std::thread _worker;
+    std::vector<factorlib::DataBus::SubscriptionHandle> _subscriptions;
 };
 
 } // namespace factorlib::tools
-

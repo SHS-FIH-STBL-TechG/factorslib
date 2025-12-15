@@ -34,15 +34,17 @@ FactorLeverageTransformer::~FactorLeverageTransformer() {
 }
 
 void FactorLeverageTransformer::start() {
-    if (_running) {
+    if (_running.exchange(true, std::memory_order_acq_rel)) {
         return;
     }
     if (_specs.empty()) {
         LOG_WARN("FactorLeverageTransformer 启动失败：spec 列表为空");
+        _running.store(false, std::memory_order_release);
         return;
     }
     if (_codes.empty()) {
         LOG_WARN("FactorLeverageTransformer 启动失败：code 列表为空");
+        _running.store(false, std::memory_order_release);
         return;
     }
 
@@ -55,8 +57,8 @@ void FactorLeverageTransformer::start() {
         bus.register_topic<double>(spec.output_topic, _output_capacity);
     }
 
-    _stop_requested = false;
-    _running = true;
+    _stop_requested.store(false, std::memory_order_release);
+    _subscriptions.clear();
     _worker = std::thread(&FactorLeverageTransformer::worker_loop, this);
 
     for (std::size_t spec_idx = 0; spec_idx < _specs.size(); ++spec_idx) {
@@ -65,30 +67,41 @@ void FactorLeverageTransformer::start() {
             continue;
         }
         for (const auto& code : _codes) {
-            DataBus::instance().subscribe<double>(
+            auto h = DataBus::instance().subscribe_handle<double>(
                 spec.input_topic,
                 code,
                 [this, spec_idx](const std::string& cb_code, int64_t ts, const double& value) {
                     this->enqueue_event(spec_idx, cb_code, ts, value);
                 });
+            if (h) {
+                _subscriptions.emplace_back(std::move(h));
+            }
         }
     }
 }
 
 void FactorLeverageTransformer::stop() {
-    if (!_running) {
+    if (!_running.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
     {
         std::lock_guard<std::mutex> lk(_queue_mtx);
-        _stop_requested = true;
+        _stop_requested.store(true, std::memory_order_release);
     }
+
+    // 先取消订阅，避免 stop 期间持续 enqueue 导致 worker 无法排空队列退出。
+    auto& bus = DataBus::instance();
+    std::vector<factorlib::DataBus::SubscriptionHandle> subs;
+    subs.swap(_subscriptions);
+    for (const auto& h : subs) {
+        bus.unsubscribe(h);
+    }
+
     _queue_cv.notify_all();
     if (_worker.joinable()) {
         _worker.join();
     }
-    _running = false;
-    _stop_requested = false;
+    _stop_requested.store(false, std::memory_order_release);
 }
 
 std::optional<SlidingGaussianLeverage::DistributionSnapshot>
@@ -107,7 +120,7 @@ void FactorLeverageTransformer::enqueue_event(std::size_t spec_index,
                                               const std::string& code,
                                               int64_t ts_ms,
                                               double value) {
-    if (!_running) {
+    if (!_running.load(std::memory_order_acquire)) {
         return;
     }
     Event evt;
@@ -117,6 +130,9 @@ void FactorLeverageTransformer::enqueue_event(std::size_t spec_index,
     evt.value = value;
     {
         std::lock_guard<std::mutex> lk(_queue_mtx);
+        if (_stop_requested.load(std::memory_order_acquire)) {
+            return;
+        }
         _queue.emplace_back(std::move(evt));
     }
     _queue_cv.notify_one();
@@ -128,9 +144,9 @@ void FactorLeverageTransformer::worker_loop() {
         {
             std::unique_lock<std::mutex> lk(_queue_mtx);
             _queue_cv.wait(lk, [this] {
-                return _stop_requested || !_queue.empty();
+                return _stop_requested.load(std::memory_order_acquire) || !_queue.empty();
             });
-            if (_stop_requested && _queue.empty()) {
+            if (_stop_requested.load(std::memory_order_acquire) && _queue.empty()) {
                 break;
             }
             evt = std::move(_queue.front());
