@@ -54,12 +54,47 @@ factor_leverage_tool_new
 
 1. 对 `factor_raw` 做中位数去中心化；
 2. 全样本 rank→normal 得到 z 序列；
-3. 在 z 空间网格搜索 `theta`，最大化  
-   `score = (E_T - 1) / dd_rms`，
+3. 在 $z$ 空间网格搜索阈值 $\theta$，最大化  
+   $$
+   score=
+   \frac{\prod_{t=1}^{T}\left(1+L_t r_t\right)-1}
+   {\sqrt{\frac{1}{D}\sum_{t=1}^{T}\left(DD_t\right)^2}}
+   $$
    并且要求年均交易日 ≥ 50（按 252 交易日/年折算）；
-4. 依据最佳 `theta` 生成原始信号 `b_raw ∈ {0, ±[1,2]}`；
-5. 依据风险对齐和最大杠杆上限得到最终杠杆 `leverage = clamp(c * b_raw)`；
-6. 通过 `p_high=Φ(theta)` 的经验分位数反推出原值阈值 `x_high/x_low` 并输出。
+4. 依据最佳 $\theta$ 生成原始信号 $b_{\mathrm{raw}} \in \{0, \pm[1,2]\}$；
+5. 依据风险对齐和最大杠杆上限得到最终杠杆：
+   $$L_t=\mathrm{clamp}(c\cdot b_{\mathrm{raw},t},[-L_{\max},+L_{\max}])$$
+6. 通过 $p_{\mathrm{high}}=\Phi(\theta)$ 的经验分位数反推出原值阈值 $x_{\mathrm{high}}/x_{\mathrm{low}}$ 并输出。
+
+### 4.1 因子评估值（`score`/`oos_score`）最终公式
+
+工具里“因子评估值”对应 `score`（阈值搜索内）/`oos_score`（walk-forward OOS 评估），计算口径一致。设日收益为 $r_t=\mathrm{next\_return}_t$，最终杠杆为 $L_t$（即输出 CSV 中的 `leverage`），则最终公式可直接写为（不引入中间变量）：
+
+$$
+score=
+\frac{\prod_{t=1}^{T}\left(1+L_t r_t\right)-1}
+{\sqrt{\frac{1}{D}\sum_{t=1}^{T}\left(DD_t\right)^2}}
+$$
+
+其中 $D$ 为分母归一化天数（阈值搜索用 `--D`/样本天数；walk-forward OOS 用 $D=T$=OOS 点数）。
+
+备注：空仓日 $L_t=0\Rightarrow (1+L_t r_t)=1$，因此分子连乘“写到 $T$”只是为了和全日历回撤对齐；数值上等价于只在开仓日（$L_t\neq 0$）做连乘。
+
+### 4.2 公式参数含义
+
+- $t$：评估日序号（从 $1$ 到 $T$）。
+- $T$：评估样本长度（阈值搜索：该段样本天数；walk-forward：OOS 点数）。
+- $r_t$：下一期收益（CSV 中 `next_return`），由收盘价计算：$r_t=\frac{close_{t+1}}{close_t}-1$。
+- $L_t$：第 $t$ 天最终杠杆（CSV 中 `leverage`），范围 $[-L_{\max},+L_{\max}]$，空仓日为 $0$。
+- $L_{\max}$：最大杠杆上限（命令行 `--max_leverage`）。
+- $DD_t$：第 $t$ 天回撤（drawdown，CSV 中 `drawdown`），取值 $[0,1]$，且
+  $$
+  DD_t
+  =1-\frac{\prod_{i=1}^{t}\left(1+L_i r_i\right)}{\max_{1\le u\le t}\prod_{i=1}^{u}\left(1+L_i r_i\right)}
+  $$
+- $D$：回撤均方根的归一化分母天数（阈值搜索：`--D`/样本天数；walk-forward：$D=T$）。
+- $trade\_days$：开仓天数（代码里统计为 $L_t\neq 0$ 的天数），用于“年均交易日 ≥ 50”等约束；不改变分子连乘的数值（空仓日乘子为 $1$）。
+- $score$：因子评估值，越大表示在相同回撤尺度下的累计收益越高。
 
 ## 5. 如何扩展/改配置
 
