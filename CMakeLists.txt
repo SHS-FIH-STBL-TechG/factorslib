@@ -333,6 +333,9 @@ add_library(factor_basic
         src/factors/Kline/volume_ar_forecast_factor.cpp
         src/factors/Kline/high_volume_remaining_factor.cpp
         src/factors/Kline/kalman_forecast_z_factor.cpp
+        src/factors/Kline/gls_drift_z_factor.cpp
+        src/factors/Kline/hmm2_logodds_factor.cpp
+        src/factors/Kline/bayes_drift_logodds_factor.cpp
         src/factors/Kline_new/haar_wavelet_trend_factor.cpp
 )
 

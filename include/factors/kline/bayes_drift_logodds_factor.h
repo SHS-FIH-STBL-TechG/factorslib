@@ -1,0 +1,73 @@
+#pragma once
+
+#include "core/databus.h"
+#include "core/ifactor.h"
+#include "core/types.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace factorlib {
+
+struct BayesDriftLogOddsConfig {
+    int window_size = 60;     // windowN in yinzi3
+    int min_obs = 20;
+    double sigma2_floor = 1e-8;
+    double r_cap = 0.20;
+    double mu0 = 0.0;
+    double tau0 = 0.01;
+};
+
+class BayesDriftLogOddsFactor : public BaseFactor {
+public:
+    using Code = std::string;
+
+    explicit BayesDriftLogOddsFactor(const std::vector<Code>& codes,
+                                     const BayesDriftLogOddsConfig& cfg = BayesDriftLogOddsConfig{});
+
+    static void register_topics(std::size_t capacity);
+
+    void on_bar(const Bar& b) override;
+
+    bool force_flush(const std::string& /*code*/) override { return true; }
+
+private:
+    struct CodeState {
+        struct Sample {
+            double w = 0.0;
+            double wr = 0.0;
+        };
+
+        explicit CodeState(const BayesDriftLogOddsConfig& cfg);
+
+        bool has_last_close = false;
+        double last_close = 0.0;
+
+        std::uint64_t bad_close_count = 0;
+        std::uint64_t bad_hilo_count = 0;
+        std::uint64_t bad_weight_count = 0;
+
+        std::deque<Sample> window;
+        double sum_w = 0.0;
+        double sum_wr = 0.0;
+
+        bool push_bar(const Bar& b, const BayesDriftLogOddsConfig& cfg);
+        bool ready(const BayesDriftLogOddsConfig& cfg) const {
+            return static_cast<int>(window.size()) >= cfg.min_obs;
+        }
+        double value(const BayesDriftLogOddsConfig& cfg) const;
+    };
+
+    BayesDriftLogOddsConfig _cfg;
+    std::unordered_set<Code> _codes_filter;
+    std::unordered_map<Code, CodeState> _states;
+
+    bool accept_code(const Code& code) const;
+};
+
+} // namespace factorlib
