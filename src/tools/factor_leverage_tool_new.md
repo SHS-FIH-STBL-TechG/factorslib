@@ -32,6 +32,7 @@ src/tools/
 ```
 factor_leverage_tool_new
     [--data_dir DIR]
+    [--parquet_dir DIR_OR_FILE]          # Linux only: direct read parquet via pyarrow (no CSV)
     [--factor name1,name2|all]
     [--codes CODE1,CODE2,...]
     [--start YYYY-MM-DD] [--end YYYY-MM-DD]
@@ -45,6 +46,9 @@ factor_leverage_tool_new
 - `--factor` 为空或 `all` 表示跑全部内置因子；也可传多个逗号分隔的名字。
 - `--codes` 为空表示使用 data_dir 下全部 code。
 - `--D` 用于风险对齐分母，默认使用原始样本天数（CSV 天数）；手动指定则强制覆盖。
+- `--parquet_dir` 默认直读 parquet（不落盘 CSV），支持两类 schema：
+  - 列名为 `icode/tradeDate/pxclose...`
+  - 列名为数字字符串：`13`=Wind代码, `9`=交易日期, `3000002/3/4/5`=OHLC, `3000006`=涨跌, `3000007`=涨跌幅, `3000008`=成交量, `3000009`=成交额
 
 ## 4. 阈值/杠杆逻辑
 

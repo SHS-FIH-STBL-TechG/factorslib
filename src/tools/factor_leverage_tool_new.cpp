@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <cstdint>
 #include <ctime>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -25,6 +27,7 @@
 #include <string>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -59,22 +62,58 @@ std::optional<std::string> maybe_default_linux_parquet_dir() {
     return std::nullopt;
 }
 
-fs::path materialize_kline_csv_from_parquet(const fs::path& parquet_dir,
-                                            const fs::path& out_dir_base,
-                                            const std::vector<std::string>& codes_filter,
-                                            const std::optional<int64_t>& start_ms,
-                                            const std::optional<int64_t>& end_ms) {
+int64_t make_time_ms_utc_close(int year, int month, int day, int hour = 15) {
+    std::tm tm{};
+    tm.tm_year = year - 1900;
+    tm.tm_mon = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    return static_cast<int64_t>(timegm(&tm)) * 1000;
+}
+
+int64_t ts_from_yyyymmdd(int yyyymmdd) {
+    int year = yyyymmdd / 10000;
+    int month = (yyyymmdd / 100) % 100;
+    int day = yyyymmdd % 100;
+    return make_time_ms_utc_close(year, month, day);
+}
+
+static inline uint16_t read_u16_le(const unsigned char* p) {
+    return static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8);
+}
+
+static inline int32_t read_i32_le(const unsigned char* p) {
+    return static_cast<int32_t>(static_cast<uint32_t>(p[0]) |
+                                (static_cast<uint32_t>(p[1]) << 8) |
+                                (static_cast<uint32_t>(p[2]) << 16) |
+                                (static_cast<uint32_t>(p[3]) << 24));
+}
+
+static inline double read_f64_le(const unsigned char* p) {
+    static_assert(sizeof(double) == 8, "double must be 8 bytes");
+    double v = 0.0;
+    std::memcpy(&v, p, 8);
+    return v;
+}
+
+std::vector<KlineCsvSeries> load_kline_series_from_parquet(const fs::path& parquet_path,
+                                                           const fs::path& out_dir_base,
+                                                           const std::vector<std::string>& codes_filter,
+                                                           const std::optional<int64_t>& start_ms,
+                                                           const std::optional<int64_t>& end_ms) {
     std::ostringstream tag;
-    tag << "parquet_cache_" << std::chrono::duration_cast<std::chrono::milliseconds>(
-                                  std::chrono::system_clock::now().time_since_epoch())
-                                  .count();
+    tag << "parquet_stream_" << std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::system_clock::now().time_since_epoch())
+                                   .count();
     fs::path cache_dir = out_dir_base / tag.str();
     fs::create_directories(cache_dir);
 
-    fs::path script_path = cache_dir / "parquet_to_kline_csv.py";
+    fs::path script_path = cache_dir / "parquet_to_kline_stream.py";
     {
         std::ofstream script(script_path);
-        script << R"PY(import os, sys
+        script << R"PY(import sys, struct
 
 def _pick(cols, candidates):
     cols_l = {c.lower(): c for c in cols}
@@ -83,90 +122,106 @@ def _pick(cols, candidates):
             return cols_l[name.lower()]
     return None
 
-def _to_ymd(v):
+def _to_int_yyyymmdd(v):
     if v is None:
         return None
     try:
         import pandas as pd
         if isinstance(v, pd.Timestamp):
-            return v.strftime("%Y-%m-%d")
+            return int(v.strftime("%Y%m%d"))
     except Exception:
         pass
     try:
         if isinstance(v, (int,)) or (isinstance(v, str) and v.isdigit()):
             s = str(v)
             if len(s) == 8:
-                return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+                return int(s)
     except Exception:
         pass
     try:
         s = str(v)
         if len(s) >= 10 and s[4] == "-" and s[7] == "-":
-            return s[0:10]
+            return int(s[0:4] + s[5:7] + s[8:10])
     except Exception:
         pass
     return None
 
-def main():
-    # argv: parquet_dir out_dir codes_csv start_ms end_ms
-    if len(sys.argv) < 3:
-        print("Usage: python parquet_to_kline_csv.py parquet_dir out_dir [codes_csv] [start_ms] [end_ms]")
-        return 2
-    parquet_dir = sys.argv[1]
-    out_dir = sys.argv[2]
-    codes_csv = sys.argv[3] if len(sys.argv) > 3 else ""
-    start_ms = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
-    end_ms = int(sys.argv[5]) if len(sys.argv) > 5 and sys.argv[5] else None
+def _scale_price(x):
+    if x is None:
+        return None
+    try:
+        # dm/401000001 px* is uint32 with 2 decimals, stored as integer points
+        if isinstance(x, (int,)) or (isinstance(x, str) and x.isdigit()):
+            xi = int(x)
+            return xi / 100.0
+        return float(x)
+    except Exception:
+        return None
 
+def _scale_qty_to_wangu(x):
+    if x is None:
+        return None
+    try:
+        # qty: 手; tests/data expects 成交量(万股). 1手=100股 => 万股=10000股 => 手*0.01
+        return float(x) * 0.01
+    except Exception:
+        return None
+
+def _scale_amt_to_wanyuan(x):
+    if x is None:
+        return None
+    try:
+        # amt: 千元; tests/data expects 成交额(万元) => /10
+        return float(x) / 10.0
+    except Exception:
+        return None
+
+def _ms_to_int_yyyymmdd(ms):
+    from datetime import datetime, timezone, timedelta
+    CST = timezone(timedelta(hours=8))
+    dt = datetime.fromtimestamp(ms / 1000.0, tz=CST)
+    return int(dt.strftime("%Y%m%d"))
+
+def main():
+    # argv: parquet_path codes_csv start_ms end_ms
+    if len(sys.argv) < 2:
+        print("Usage: python parquet_to_kline_stream.py parquet_path [codes_csv] [start_ms] [end_ms]", file=sys.stderr)
+        return 2
+    parquet_path = sys.argv[1]
+    codes_csv = sys.argv[2] if len(sys.argv) > 2 else ""
+    start_ms = int(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else None
+    end_ms = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] else None
     codes = set([c for c in codes_csv.split(",") if c]) if codes_csv else None
 
     try:
+        import pyarrow as pa
         import pyarrow.dataset as ds
     except Exception as e:
-        print("[ERR] pyarrow is required to read parquet:", e)
+        print("[ERR] pyarrow is required to read parquet:", e, file=sys.stderr)
         return 3
 
-    dataset = ds.dataset(parquet_dir, format="parquet")
+    dataset = ds.dataset(parquet_path, format="parquet")
     schema_cols = [f.name for f in dataset.schema]
 
-    # dm/401000001 schema examples:
-    #   icode (Wind code), tradeDate (yyyymmdd), pxopen/pxhigh/pxlow/pxclose (uint32, 2dp),
-    #   qty (uint64, 手), amt (float64, 千元)
-    col_date = _pick(schema_cols, ["tradeDate", "trade_date", "date", "datetime", "dt", "time", "timestamp", "ts"])
-    col_code = _pick(schema_cols, ["icode", "code", "instrument_id", "symbol", "ticker"])
-    col_open = _pick(schema_cols, ["pxopen", "open", "open_price"])
-    col_high = _pick(schema_cols, ["pxhigh", "high", "high_price"])
-    col_low  = _pick(schema_cols, ["pxlow", "low", "low_price"])
-    col_close = _pick(schema_cols, ["pxclose", "close", "close_price", "adj_close", "price"])
-    col_chg = _pick(schema_cols, ["pxchg", "chg", "change"])
-    col_roc = _pick(schema_cols, ["roc", "pct_chg", "pct_change", "return"])
-    col_qty = _pick(schema_cols, ["qty", "volume", "vol"])
-    col_amt = _pick(schema_cols, ["amt", "amount", "turnover"])
+    col_date = _pick(schema_cols, ["tradeDate", "trade_date", "date", "datetime", "dt", "time", "timestamp", "ts", "9"])
+    col_code = _pick(schema_cols, ["icode", "code", "instrument_id", "symbol", "ticker", "windcode", "13", "gkid13", "gkid_13"])
+    col_open = _pick(schema_cols, ["pxopen", "open", "open_price", "3000002"])
+    col_high = _pick(schema_cols, ["pxhigh", "high", "high_price", "3000003"])
+    col_low  = _pick(schema_cols, ["pxlow", "low", "low_price", "3000004"])
+    col_close = _pick(schema_cols, ["pxclose", "close", "close_price", "adj_close", "price", "3000005"])
+    col_qty = _pick(schema_cols, ["qty", "volume", "vol", "3000008"])
+    col_amt = _pick(schema_cols, ["amt", "amount", "turnover", "3000009"])
 
-    if not col_date:
-        print("[ERR] cannot find date column in parquet schema:", schema_cols)
-        return 4
-    if not col_close:
-        print("[ERR] cannot find close column in parquet schema:", schema_cols)
+    if not col_date or not col_close:
+        print("[ERR] cannot find required columns in parquet schema:", schema_cols, file=sys.stderr)
         return 4
 
-    columns = [c for c in [col_code, col_date, col_open, col_high, col_low, col_close,
-                           col_chg, col_roc, col_qty, col_amt] if c]
+    columns = [c for c in [col_code, col_date, col_open, col_high, col_low, col_close, col_qty, col_amt] if c]
 
     filt = None
     try:
-        import pyarrow as pa
-        from datetime import datetime, timezone, timedelta
-
-        CST = timezone(timedelta(hours=8))
-
-        def _ms_to_int_yyyymmdd(ms):
-            dt = datetime.fromtimestamp(ms / 1000.0, tz=CST)
-            return int(dt.strftime("%Y%m%d"))
-
         if codes is not None and col_code:
             filt = ds.field(col_code).isin(list(codes))
-
         if col_date and (start_ms is not None or end_ms is not None):
             ftype = dataset.schema.field(col_date).type
             if pa.types.is_integer(ftype):
@@ -181,73 +236,59 @@ def main():
     except Exception:
         filt = filt
 
-    table = dataset.to_table(columns=columns, filter=filt) if filt is not None else dataset.to_table(columns=columns)
-    data = table.to_pylist()
+    scanner = dataset.scanner(columns=columns, filter=filt) if filt is not None else dataset.scanner(columns=columns)
 
-    def _scale_price(x):
-        if x is None:
-            return None
-        try:
-            # dm/401000001 px* is uint32 with 2 decimals, stored as integer points
-            if isinstance(x, (int,)) or (isinstance(x, str) and x.isdigit()):
-                xi = int(x)
-                return xi / 100.0
-            return float(x)
-        except Exception:
-            return None
+    # Binary stream protocol (little-endian):
+    #   magic 'FPL1'
+    #   repeated records:
+    #     u16 code_len, bytes[code_len] code_utf8
+    #     i32 yyyymmdd
+    #     f64 open, high, low, close
+    #     f64 volume_wangu (can be NaN)
+    #     f64 turnover_wanyuan (can be NaN)
+    out = sys.stdout.buffer
+    out.write(b"FPL1")
 
-    def _scale_qty_to_wangu(x):
-        if x is None:
-            return None
-        try:
-            # qty: 手; tests/data expects 成交量(万股). 1手=100股 => 万股=10000股 => 手*0.01
-            return float(x) * 0.01
-        except Exception:
-            return None
+    for batch in scanner.to_batches():
+        cols = batch.to_pydict()
+        codes_col = cols.get(col_code, None) if col_code else None
+        dates_col = cols.get(col_date, None)
+        o_col = cols.get(col_open, None)
+        h_col = cols.get(col_high, None)
+        l_col = cols.get(col_low, None)
+        c_col = cols.get(col_close, None)
+        q_col = cols.get(col_qty, None)
+        a_col = cols.get(col_amt, None)
 
-    def _scale_amt_to_wanyuan(x):
-        if x is None:
-            return None
-        try:
-            # amt: 千元; tests/data expects 成交额(万元) => /10
-            return float(x) / 10.0
-        except Exception:
-            return None
+        n = len(dates_col)
+        for i in range(n):
+            code = str(codes_col[i]) if codes_col is not None else "ALL"
+            if codes is not None and code not in codes:
+                continue
+            ymd = _to_int_yyyymmdd(dates_col[i])
+            if ymd is None:
+                continue
+            o = _scale_price(o_col[i]) if o_col is not None else None
+            h = _scale_price(h_col[i]) if h_col is not None else None
+            l = _scale_price(l_col[i]) if l_col is not None else None
+            c = _scale_price(c_col[i])
+            if c is None:
+                continue
+            vol = _scale_qty_to_wangu(q_col[i]) if q_col is not None else None
+            amt = _scale_amt_to_wanyuan(a_col[i]) if a_col is not None else None
 
-    grouped = {}
-    for row in data:
-        code = str(row.get(col_code, "")) if col_code else "ALL"
-        if codes is not None and code not in codes:
-            continue
-        ymd = _to_ymd(row.get(col_date))
-        if not ymd:
-            continue
-        o = _scale_price(row.get(col_open, None)) if col_open else None
-        h = _scale_price(row.get(col_high, None)) if col_high else None
-        l = _scale_price(row.get(col_low, None)) if col_low else None
-        c = _scale_price(row.get(col_close, None))
-        if c is None:
-            continue
-        chg = _scale_price(row.get(col_chg, None)) if col_chg else None
-        roc = row.get(col_roc, None) if col_roc else None
-        vol = _scale_qty_to_wangu(row.get(col_qty, None)) if col_qty else None
-        amt = _scale_amt_to_wanyuan(row.get(col_amt, None)) if col_amt else None
-        grouped.setdefault(code, []).append((ymd, o, h, l, c, chg, roc, None, None, vol, amt, None))
-
-    os.makedirs(out_dir, exist_ok=True)
-    for code, rows in grouped.items():
-        rows.sort(key=lambda x: x[0])
-        out_path = os.path.join(out_dir, f"{code}.csv")
-        with open(out_path, "w", encoding="utf-8") as f:
-            # Align with tests/data loader column positions:
-            # [0]=date, [1..4]=OHLC, [9]=volume, [10]=turnover
-            f.write("交易日期,开盘点位,最高点位,最低点位,收盘价,涨跌,涨跌幅(%),开始日累计涨跌,开始日累计涨跌幅,成交量(万股),成交额(万元),持仓量\n")
-            def fmt(x):
-                return "" if x is None else str(x)
-            for (ymd, o, h, l, c, chg, roc, acc_chg, acc_roc, vol, amt, oi) in rows:
-                f.write(",".join([ymd, fmt(o), fmt(h), fmt(l), fmt(c),
-                                   fmt(chg), fmt(roc), fmt(acc_chg), fmt(acc_roc),
-                                   fmt(vol), fmt(amt), fmt(oi)]) + "\n")
+            code_b = code.encode("utf-8")
+            if len(code_b) > 65535:
+                continue
+            out.write(struct.pack("<H", len(code_b)))
+            out.write(code_b)
+            out.write(struct.pack("<i", int(ymd)))
+            out.write(struct.pack("<dddd", float(o) if o is not None else float(c),
+                                  float(h) if h is not None else float(c),
+                                  float(l) if l is not None else float(c),
+                                  float(c)))
+            out.write(struct.pack("<d", float(vol) if vol is not None else float("nan")))
+            out.write(struct.pack("<d", float(amt) if amt is not None else float("nan")))
 
     return 0
 
@@ -262,24 +303,103 @@ if __name__ == "__main__":
         codes_csv << codes_filter[i];
     }
 
-    auto run_py = [&](const std::string& pybin) -> int {
+    auto run_py = [&](const std::string& pybin) -> std::pair<FILE*, std::string> {
         std::ostringstream cmd;
-        cmd << pybin << " \"" << script_path.string() << "\" \"" << parquet_dir.string() << "\" \""
-            << cache_dir.string() << "\" \"" << codes_csv.str() << "\" \""
-            << (start_ms ? std::to_string(*start_ms) : std::string()) << "\" \""
+        cmd << pybin << " \"" << script_path.string() << "\" \"" << parquet_path.string() << "\" \""
+            << codes_csv.str() << "\" \"" << (start_ms ? std::to_string(*start_ms) : std::string()) << "\" \""
             << (end_ms ? std::to_string(*end_ms) : std::string()) << "\"";
-        return std::system(cmd.str().c_str());
+        return {popen(cmd.str().c_str(), "r"), cmd.str()};
     };
 
-    int rc = run_py("python3");
-    if (rc != 0) {
-        rc = run_py("python");
+    FILE* pipe = nullptr;
+    std::string last_cmd;
+    std::tie(pipe, last_cmd) = run_py("python3");
+    if (!pipe) {
+        std::tie(pipe, last_cmd) = run_py("python");
     }
-    if (rc != 0) {
-        throw std::runtime_error("parquet->csv failed (rc=" + std::to_string(rc) + ")");
+    if (!pipe) {
+        throw std::runtime_error("failed to start python to read parquet");
     }
-    return cache_dir;
+
+    std::vector<unsigned char> buf;
+    buf.reserve(1 << 20);
+    unsigned char tmp[1 << 15];
+    while (true) {
+        std::size_t n = std::fread(tmp, 1, sizeof(tmp), pipe);
+        if (n == 0) break;
+        buf.insert(buf.end(), tmp, tmp + n);
+    }
+    int rc = pclose(pipe);
+    if (rc != 0) {
+        throw std::runtime_error("parquet stream failed (rc=" + std::to_string(rc) + "): " + last_cmd);
+    }
+
+    if (buf.size() < 4 || std::memcmp(buf.data(), "FPL1", 4) != 0) {
+        throw std::runtime_error("invalid parquet stream header");
+    }
+
+    std::unordered_map<std::string, KlineCsvSeries> series_map;
+    std::size_t off = 4;
+    while (off < buf.size()) {
+        if (off + 2 > buf.size()) {
+            throw std::runtime_error("truncated parquet stream (code_len)");
+        }
+        uint16_t code_len = read_u16_le(buf.data() + off);
+        off += 2;
+        if (off + code_len > buf.size()) {
+            throw std::runtime_error("truncated parquet stream (code)");
+        }
+        std::string code(reinterpret_cast<const char*>(buf.data() + off), code_len);
+        off += code_len;
+        if (off + 4 + 8 * 6 > buf.size()) {
+            throw std::runtime_error("truncated parquet stream (payload)");
+        }
+        int32_t ymd = read_i32_le(buf.data() + off);
+        off += 4;
+        double open = read_f64_le(buf.data() + off);
+        off += 8;
+        double high = read_f64_le(buf.data() + off);
+        off += 8;
+        double low = read_f64_le(buf.data() + off);
+        off += 8;
+        double close = read_f64_le(buf.data() + off);
+        off += 8;
+        double vol = read_f64_le(buf.data() + off);
+        off += 8;
+        double amt = read_f64_le(buf.data() + off);
+        off += 8;
+
+        factorlib::Bar bar{};
+        bar.instrument_id = code;
+        bar.data_time_ms = ts_from_yyyymmdd(ymd);
+        bar.open = open;
+        bar.high = high;
+        bar.low = low;
+        bar.close = close;
+        bar.volume = std::isfinite(vol) ? static_cast<uint64_t>(vol) : 0;
+        bar.turnover = std::isfinite(amt) ? amt : 0.0;
+        bar.interval_ms = 24 * 60 * 60 * 1000;
+
+        auto& s = series_map[code];
+        if (s.code.empty()) {
+            s.table_name = parquet_path.filename().string();
+            s.code = code;
+        }
+        s.bars.push_back(bar);
+    }
+
+    std::vector<KlineCsvSeries> out;
+    out.reserve(series_map.size());
+    for (auto& kv : series_map) {
+        auto& s = kv.second;
+        std::sort(s.bars.begin(), s.bars.end(),
+                  [](const factorlib::Bar& a, const factorlib::Bar& b) { return a.data_time_ms < b.data_time_ms; });
+        if (!s.bars.empty()) out.emplace_back(std::move(s));
+    }
+    std::sort(out.begin(), out.end(), [](const KlineCsvSeries& a, const KlineCsvSeries& b) { return a.code < b.code; });
+    return out;
 }
+
 #endif
 
 std::vector<std::string> split_csv(const std::string& s) {
@@ -624,7 +744,7 @@ int main(int argc, char** argv) {
             << "Usage:\n"
             << "  factor_leverage_tool_new \\\n"
             << "    [--data_dir DIR]                (default tests/data) \\\n"
-            << "    [--parquet_dir DIR]             (Linux only; default /mnt/disk2/qdata/dm/401000001 if exists) \\\n"
+            << "    [--parquet_dir PATH]            (Linux only; direct read parquet via pyarrow) \\\n"
             << "    [--factor name1,name2|all]      (default all built-ins) \\\n"
             << "    [--codes CODE1,CODE2,...]       (default load every CSV) \\\n"
             << "    [--start YYYY-MM-DD] [--end YYYY-MM-DD] \\\n"
@@ -665,14 +785,11 @@ int main(int argc, char** argv) {
     std::string out_dir_base =
         get_arg(argc, argv, "--out_dir").value_or(DefaultOutputDir());
     fs::create_directories(out_dir_base);
-
+ 
 #if !defined(_WIN32)
     std::optional<std::string> parquet_dir = get_arg(argc, argv, "--parquet_dir");
     if (!parquet_dir.has_value() && !get_arg(argc, argv, "--data_dir").has_value()) {
         parquet_dir = maybe_default_linux_parquet_dir();
-    }
-    if (parquet_dir.has_value()) {
-        data_dir = materialize_kline_csv_from_parquet(*parquet_dir, out_dir_base, codes, start_ms, end_ms).string();
     }
 #endif
 
@@ -690,9 +807,17 @@ int main(int argc, char** argv) {
     const std::size_t zwin = static_cast<std::size_t>(std::max(5, std::stoi(get_arg(argc, argv, "--zwin").value_or("250"))));
 
     factorlib::tools::FactorLeverageOptimizer opt(cfg);
-    factorlib::tools::KlineCsvLoader loader(data_dir);
 
-    auto series_list = loader.load(codes, start_ms, end_ms);
+    std::vector<factorlib::tools::KlineCsvSeries> series_list;
+#if !defined(_WIN32)
+    if (parquet_dir.has_value()) {
+        series_list = load_kline_series_from_parquet(*parquet_dir, out_dir_base, codes, start_ms, end_ms);
+    } else
+#endif
+    {
+        factorlib::tools::KlineCsvLoader loader(data_dir);
+        series_list = loader.load(codes, start_ms, end_ms);
+    }
     if (series_list.empty()) {
         std::cerr << "No series loaded. Check --data_dir / --codes.\n";
         return 2;

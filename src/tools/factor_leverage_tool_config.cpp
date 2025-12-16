@@ -6,6 +6,9 @@
 #include "factors/kline/volume_ar_forecast_factor.h"
 #include "factors/kline/volume_price_structure_factor.h"
 #include "factors/kline/kalman_forecast_z_factor.h"
+#include "factors/kline/gls_drift_z_factor.h"
+#include "factors/kline/hmm2_logodds_factor.h"
+#include "factors/kline/bayes_drift_logodds_factor.h"
 #include "factors/stat/wavelet_trend_energy_factor.h"
 #include "factors/Kline_new/haar_wavelet_trend_factor.h"
 
@@ -83,6 +86,30 @@ const std::vector<FactorBinding>& GetFactorBindings() {
             [](std::size_t cap) { factorlib::KalmanForecastZFactor::register_topics(cap); },
             [](const std::vector<std::string>& codes) {
                 return MakeBarOnlyFactor<factorlib::KalmanForecastZFactor>(codes);
+            }
+        },
+        {
+            "gls_drift_z",
+            "kline/gls_drift_z",
+            [](std::size_t cap) { factorlib::GlsDriftZFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<factorlib::GlsDriftZFactor>(codes);
+            }
+        },
+        {
+            "hmm2_logodds",
+            "kline/hmm2_logodds",
+            [](std::size_t cap) { factorlib::Hmm2LogOddsFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<factorlib::Hmm2LogOddsFactor>(codes);
+            }
+        },
+        {
+            "bayes_drift_logodds",
+            "kline/bayes_drift_logodds",
+            [](std::size_t cap) { factorlib::BayesDriftLogOddsFactor::register_topics(cap); },
+            [](const std::vector<std::string>& codes) {
+                return MakeBarOnlyFactor<factorlib::BayesDriftLogOddsFactor>(codes);
             }
         },
         {
