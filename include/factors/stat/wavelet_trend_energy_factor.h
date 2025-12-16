@@ -67,6 +67,10 @@ private:
     struct CodeState {
         math::RollingMODWT<double> modwt;
         int window_size = 0;
+        bool has_last_logp = false;
+        double last_logp = 0.0;
+        int consecutive_zero_dx = 0;
+        double last_dir = 1.0;
         std::deque<double> log_price_window;
 
         explicit CodeState(const WaveTrendConfig& cfg);

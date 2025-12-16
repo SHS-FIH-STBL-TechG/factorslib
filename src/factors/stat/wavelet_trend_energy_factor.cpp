@@ -1,5 +1,6 @@
 #include "factors/stat/wavelet_trend_energy_factor.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -105,15 +106,39 @@ void WaveletTrendEnergyFactor::on_price_event(const std::string& code_raw,
         auto& st = ensure_state(scope);
         const std::string scoped_code = scope.as_bus_code();
 
-        if (!st.modwt.push(logp)) {
-            LOG_DEBUG("WaveletTrendEnergy: push failed, code={}, log_price={}", scoped_code, logp);
-            return;
-        }
-
+        // Keep a log-price window aligned with the MODWT window of dx (need W+1 log prices for W diffs).
         const int W = std::max(1, st.window_size);
         st.log_price_window.push_back(logp);
-        while (static_cast<int>(st.log_price_window.size()) > W) {
+        while (static_cast<int>(st.log_price_window.size()) > W + 1) {
             st.log_price_window.pop_front();
+        }
+        if (st.log_price_window.size() >= 2) {
+            const double d = st.log_price_window.back() - st.log_price_window.front();
+            if (std::isfinite(d) && std::abs(d) > 1e-12) {
+                const double s = sign(d);
+                if (s != 0.0) st.last_dir = s;
+            }
+        }
+
+        if (!st.has_last_logp) {
+            st.last_logp = logp;
+            st.has_last_logp = true;
+            return;
+        }
+        const double dx = logp - st.last_logp;
+        st.last_logp = logp;
+        if (!std::isfinite(dx)) {
+            return;
+        }
+        if (std::abs(dx) <= 1e-12) {
+            ++st.consecutive_zero_dx;
+        } else {
+            st.consecutive_zero_dx = 0;
+        }
+
+        if (!st.modwt.push(dx)) {
+            LOG_DEBUG("WaveletTrendEnergy: push failed, code={}, log_price={}", scoped_code, logp);
+            return;
         }
 
         if (st.modwt.ready()) {
@@ -125,20 +150,22 @@ void WaveletTrendEnergyFactor::on_price_event(const std::string& code_raw,
 void WaveletTrendEnergyFactor::compute_and_publish(const std::string& code,
                                                    CodeState& st,
                                                    int64_t ts_ms) {
-    double ratio = st.modwt.trend_energy_ratio(_cfg.trend_start_j);
-    if (!std::isfinite(ratio)) return;
-
-    double dir = 0.0;
-    if (st.log_price_window.size() >= 2) {
-        const double d = st.log_price_window.back() - st.log_price_window.front();
-        if (std::isfinite(d)) {
-            dir = sign(d);
+    const double raw = st.modwt.trend_energy_ratio(_cfg.trend_start_j);
+    double ratio = 0.0;
+    if (!std::isfinite(raw)) {
+        if (st.consecutive_zero_dx >= std::max(1, st.window_size)) {
+            ratio = 1.0;
+        } else {
+            return;
         }
+    } else {
+        ratio = std::clamp(raw, 0.0, 1.0);
     }
-    const double signed_ratio = dir * ratio;
+
+    const double signed_ratio = std::clamp(st.last_dir * ratio, -1.0, 1.0);
 
     LOG_DEBUG("WaveletTrendEnergy: code={} ts={} ratio={} dir={} signed={}",
-              code, ts_ms, ratio, dir, signed_ratio);
+              code, ts_ms, ratio, st.last_dir, signed_ratio);
 
     safe_publish<double>(TOP_WAVE_TREND, code, ts_ms, signed_ratio);
 }

@@ -156,10 +156,12 @@ def main():
     filt = None
     try:
         import pyarrow as pa
-        from datetime import datetime
+        from datetime import datetime, timezone, timedelta
+
+        CST = timezone(timedelta(hours=8))
 
         def _ms_to_int_yyyymmdd(ms):
-            dt = datetime.utcfromtimestamp(ms / 1000.0)
+            dt = datetime.fromtimestamp(ms / 1000.0, tz=CST)
             return int(dt.strftime("%Y%m%d"))
 
         if codes is not None and col_code:
@@ -239,17 +241,17 @@ def main():
         with open(out_path, "w", encoding="utf-8") as f:
             # Align with tests/data loader column positions:
             # [0]=date, [1..4]=OHLC, [9]=volume, [10]=turnover
-            f.write("交易日期,开盘点位,最高点位,最低点位,收盘价,涨跌,涨跌幅(%),开始日累计涨跌,开始日累计涨跌幅,成交量(万股),成交额(万元),持仓量\\n")
+            f.write("交易日期,开盘点位,最高点位,最低点位,收盘价,涨跌,涨跌幅(%),开始日累计涨跌,开始日累计涨跌幅,成交量(万股),成交额(万元),持仓量\n")
             def fmt(x):
-                return \"\" if x is None else str(x)
+                return "" if x is None else str(x)
             for (ymd, o, h, l, c, chg, roc, acc_chg, acc_roc, vol, amt, oi) in rows:
-                f.write(\",\".join([ymd, fmt(o), fmt(h), fmt(l), fmt(c),
+                f.write(",".join([ymd, fmt(o), fmt(h), fmt(l), fmt(c),
                                    fmt(chg), fmt(roc), fmt(acc_chg), fmt(acc_roc),
-                                   fmt(vol), fmt(amt), fmt(oi)]) + \"\\n\")
+                                   fmt(vol), fmt(amt), fmt(oi)]) + "\n")
 
     return 0
 
-if __name__ == \"__main__\":
+if __name__ == "__main__":
     sys.exit(main())
 )PY";
     }
@@ -309,11 +311,12 @@ std::optional<int64_t> parse_date_utc_ms(const std::string& ymd) {
 #else
     std::time_t sec = timegm(&tm);
 #endif
+    sec -= 8 * 3600;
     return static_cast<int64_t>(sec) * 1000;
 }
 
 std::string format_date_utc(int64_t ms) {
-    std::time_t sec = static_cast<std::time_t>(ms / 1000);
+    std::time_t sec = static_cast<std::time_t>(ms / 1000) + 8 * 3600;
     std::tm tm{};
 #if defined(_WIN32)
     gmtime_s(&tm, &sec);
