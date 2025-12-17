@@ -38,6 +38,18 @@ using namespace factorlib::tools;
 
 namespace {
 
+bool dir_has_csv_files(const fs::path& dir) {
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec) || ec) return false;
+    for (fs::directory_iterator it(dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        const auto& entry = *it;
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".csv") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<std::string> get_arg(int argc, char** argv, const std::string& key) {
     for (int i = 1; i + 1 < argc; ++i) {
         if (argv[i] == key) return std::string(argv[i + 1]);
@@ -593,6 +605,7 @@ void append_wf_summary(const fs::path& path,
                        const std::string& code,
                        const std::string& factor_key,
                        int train_window,
+                       int val_window,
                        int step,
                        std::size_t zwin,
                        double oos_score,
@@ -602,17 +615,19 @@ void append_wf_summary(const fs::path& path,
                        std::size_t trade_days,
                        std::size_t T_oos_days,
                        double avg_theta,
-                       double avg_c_scale) {
+                       double avg_c_scale,
+                       double avg_val_score) {
     const bool exists = fs::exists(path);
     std::ofstream out(path, std::ios::app);
     if (!exists) {
-        out << "code,factor,oos_score,oos_baseline_score,train_window,step,zwin,final_equity,dd_rms,trade_days,T_oos_days,avg_theta,avg_c_scale\n";
+        out << "code,factor,oos_score,oos_baseline_score,train_window,val_window,step,zwin,final_equity,dd_rms,trade_days,T_oos_days,avg_theta,avg_c_scale,avg_val_score\n";
     }
     out << code << ","
         << factor_key << ","
         << oos_score << ","
         << oos_baseline_score << ","
         << train_window << ","
+        << val_window << ","
         << step << ","
         << zwin << ","
         << final_equity << ","
@@ -620,7 +635,8 @@ void append_wf_summary(const fs::path& path,
         << trade_days << ","
         << T_oos_days << ","
         << avg_theta << ","
-        << avg_c_scale
+        << avg_c_scale << ","
+        << avg_val_score
         << "\n";
 }
 
@@ -687,18 +703,15 @@ def main():
         return 1
     csv_path, png_path, title, factor_col, b_col, leverage_col, theta_text, score_text, baseline_text = sys.argv[1:10]
 
-    factor_vals = read_column(csv_path, factor_col)
-    b_vals = read_column(csv_path, b_col)
     lev_vals = read_column(csv_path, leverage_col)
 
-    if not factor_vals and not b_vals and not lev_vals:
+    if not lev_vals:
         print(f"[WARN] no numeric values found in {csv_path}")
         return 0
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-    plot_hist(axes[0], factor_vals, f"{factor_col} distribution")
-    plot_hist(axes[1], b_vals, f"{b_col} distribution (b_t)")
-    plot_hist(axes[2], lev_vals, f"{leverage_col} distribution (L_t)")
+    # b_raw 与 leverage 当前口径一致：仅绘制 leverage 分布
+    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+    plot_hist(ax, lev_vals, f"{leverage_col} distribution (L_t)")
 
     fig.suptitle(title)
     subtitle_items = []
@@ -739,10 +752,12 @@ if __name__ == "__main__":
 } // namespace
 
 int main(int argc, char** argv) {
-    if (has_flag(argc, argv, "--help")) {
+    try {
+    if (has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h")) {
         std::cout
             << "Usage:\n"
             << "  factor_leverage_tool_new \\\n"
+            << "  factor_leverage_tool_new --help|-h\n"
             << "    [--data_dir DIR]                (default tests/data) \\\n"
             << "    [--parquet_dir PATH]            (Linux only; direct read parquet via pyarrow) \\\n"
             << "    [--factor name1,name2|all]      (default all built-ins) \\\n"
@@ -751,7 +766,7 @@ int main(int argc, char** argv) {
             << "    [--out_dir DIR]                 (default output/factor_leverage) \\\n"
             << "    [--theta_min 0] [--theta_max 2.5] [--theta_step 0.05] \\\n"
             << "    [--D 250] [--max_leverage 2] \\\n"
-            << "    [--train 252] [--step 1] [--zwin 250]\n"
+            << "    [--train 252] [--val 63] [--step 1] [--zwin 250]\n"
 #if !defined(_WIN32)
             << "Notes:\n"
             << "  - On Linux, this tool does not generate PNG plots.\n"
@@ -791,6 +806,14 @@ int main(int argc, char** argv) {
     if (!parquet_dir.has_value() && !get_arg(argc, argv, "--data_dir").has_value()) {
         parquet_dir = maybe_default_linux_parquet_dir();
     }
+    if (parquet_dir.has_value()) {
+        std::error_code ec;
+        const fs::path p(*parquet_dir);
+        if (!fs::exists(p, ec) || ec) {
+            std::cerr << "ERROR: parquet path not found: " << p.string() << "\n";
+            return 2;
+        }
+    }
 #endif
 
     factorlib::tools::LeverageSearchConfig cfg;
@@ -803,8 +826,10 @@ int main(int argc, char** argv) {
 
     // walk-forward (no-leak) settings
     const int train_window = std::max(20, std::stoi(get_arg(argc, argv, "--train").value_or("252")));
+    const int val_window_raw = std::max(10, std::stoi(get_arg(argc, argv, "--val").value_or("63")));
     const int step = std::max(1, std::stoi(get_arg(argc, argv, "--step").value_or("1")));
     const std::size_t zwin = static_cast<std::size_t>(std::max(5, std::stoi(get_arg(argc, argv, "--zwin").value_or("250"))));
+    const int val_window = std::min(val_window_raw, std::max(10, train_window - 10));
 
     factorlib::tools::FactorLeverageOptimizer opt(cfg);
 
@@ -815,11 +840,23 @@ int main(int argc, char** argv) {
     } else
 #endif
     {
+        std::error_code ec;
+        const fs::path data_dir_path(data_dir);
+        if (!fs::exists(data_dir_path, ec) || !fs::is_directory(data_dir_path, ec) || ec) {
+            std::cerr << "ERROR: data_dir not found or not a directory: " << data_dir_path.string() << "\n";
+            std::cerr << "Hint: pass --data_dir DIR (default: " << DefaultDataDir() << ")\n";
+            return 2;
+        }
+        if (!dir_has_csv_files(data_dir_path)) {
+            std::cerr << "ERROR: no .csv files found under data_dir: " << data_dir_path.string() << "\n";
+            std::cerr << "Hint: ensure DIR contains files like <code>.csv.\n";
+            return 2;
+        }
         factorlib::tools::KlineCsvLoader loader(data_dir);
         series_list = loader.load(codes, start_ms, end_ms);
     }
     if (series_list.empty()) {
-        std::cerr << "No series loaded. Check --data_dir / --codes.\n";
+        std::cerr << "ERROR: no series loaded. Check --data_dir / --codes.\n";
         return 2;
     }
 
@@ -967,11 +1004,14 @@ int main(int argc, char** argv) {
             double E = 1.0;
             double peak = 1.0;
             double sum_dd2 = 0.0;
+            double sum_lr = 0.0;
+            double sum_l2 = 0.0;
             std::size_t trade_days = 0;
 
             double sum_theta = 0.0;
-            double sum_c = 0.0;
             std::size_t cnt_policy = 0;
+            double sum_val_score = 0.0;
+            std::size_t cnt_val_score = 0;
             double sum_xlow = 0.0;
             double sum_xhigh = 0.0;
             std::size_t cnt_xlow = 0;
@@ -988,13 +1028,15 @@ int main(int argc, char** argv) {
                     std::vector<double>  z_tr (z.begin() + static_cast<std::ptrdiff_t>(s), z.begin() + static_cast<std::ptrdiff_t>(e));
                     std::vector<double>  r_tr (next_ret.begin() + static_cast<std::ptrdiff_t>(s), next_ret.begin() + static_cast<std::ptrdiff_t>(e));
 
-                    // baseline within the same train window
-                    std::vector<double> full_tr = r_tr;
-                    const int D_eff = static_cast<int>(r_tr.size());
-
-                    auto best = opt.search_best_threshold(ts_tr, x_tr, z_tr, r_tr, full_tr, D_eff);
+                    const int train_size = std::max(10, static_cast<int>(r_tr.size()) - val_window);
+                    const int val_size = static_cast<int>(r_tr.size()) - train_size;
+                    auto best = opt.search_best_threshold_train_val(ts_tr, x_tr, z_tr, r_tr, train_size, val_size);
                     if (best.ok) {
                         last_good = best;
+                        if (std::isfinite(best.score)) {
+                            sum_val_score += best.score;
+                            cnt_val_score += 1;
+                        }
                     }
                 }
 
@@ -1014,7 +1056,7 @@ int main(int argc, char** argv) {
                     p.polarity = pol->polarity;
                     p.theta = pol->theta;
                     p.z_cap = pol->z_cap;
-                    p.c_scale = pol->c_scale;
+                    p.c_scale = std::numeric_limits<double>::quiet_NaN();
                     p.profile_kind = pol->profile.kind;
                     p.symmetry_score = pol->profile.symmetry_score;
                     p.unique_ratio = pol->profile.unique_ratio;
@@ -1023,12 +1065,12 @@ int main(int argc, char** argv) {
                     p.theta_raw_high = pol->theta_raw_high;
 
                     b_raw = compute_b_raw(p.z, *pol, cfg);
-                    L = finalize_leverage_like_optimizer(p.c_scale * b_raw, b_raw, cfg);
+                    // Final_simple：L_t 取 b_raw（不再做 c_scale 风险缩放）
+                    L = finalize_leverage_like_optimizer(b_raw, b_raw, cfg);
                     p.active = (b_raw != 0.0);
 
                     // 统计策略参数均值（按“评估日历”计数）
                     sum_theta += p.theta;
-                    sum_c += p.c_scale;
                     cnt_policy += 1;
                     if (std::isfinite(p.theta_raw_low)) {
                         sum_xlow += p.theta_raw_low;
@@ -1043,16 +1085,19 @@ int main(int argc, char** argv) {
                 p.b_raw = b_raw;
                 p.leverage = L;
 
-                // === 全日历累计：空仓日 L=0 => term=1；但 drawdown 可能持续 ===
-                const double term = 1.0 + L * p.ret;
-                if (term > 0.0 && std::isfinite(term)) {
-                    E *= term;
+                // === 单利累计：E_t = 1 + sum(L r)，允许 DD>1 ===
+                if (std::isfinite(L) && std::isfinite(p.ret)) {
+                    sum_lr += L * p.ret;
+                    sum_l2 += L * L;
+                    E += L * p.ret;
                 }
                 p.equity = E;
                 if (E > peak) peak = E;
-                p.drawdown = (peak > 0.0) ? (peak - E) / peak : 0.0;
+                p.drawdown = (peak > 0.0) ? (peak - E) / peak : std::numeric_limits<double>::quiet_NaN();
 
-                sum_dd2 += p.drawdown * p.drawdown;
+                if (std::isfinite(p.drawdown)) {
+                    sum_dd2 += p.drawdown * p.drawdown;
+                }
                 if (p.active) trade_days += 1;
 
                 wf_pts.push_back(p);
@@ -1063,41 +1108,58 @@ int main(int argc, char** argv) {
                 continue;
             }
 
-            const double D_oos = static_cast<double>(wf_pts.size());
-            const double dd_rms = std::sqrt(sum_dd2 / std::max(1.0, D_oos));
-            const double oos_score = (dd_rms > 1e-12 && std::isfinite(dd_rms))
-                ? ((E - 1.0) / dd_rms)
-                : std::numeric_limits<double>::quiet_NaN();
+            const double T_oos = static_cast<double>(wf_pts.size());
+            const double dd_rms = std::sqrt(sum_dd2 / std::max(1.0, T_oos));
+            const double risk_scale_oos =
+                (sum_l2 > 1e-12 && std::isfinite(sum_l2)) ? std::sqrt(252.0 / sum_l2)
+                                                          : std::numeric_limits<double>::quiet_NaN();
+            const double oos_score =
+                (dd_rms > 1e-12 && std::isfinite(dd_rms) && std::isfinite(risk_scale_oos))
+                    ? (risk_scale_oos * ((252.0 / std::max(1.0, T_oos)) * sum_lr) / dd_rms)
+                    : std::numeric_limits<double>::quiet_NaN();
 
             // baseline (1x hold) on the same oos slice (full calendar within OOS)
             double E_base = 1.0;
             double peak_base = 1.0;
             double sum_dd2_base = 0.0;
+            double sum_lr_base = 0.0;
+            double sum_l2_base = 0.0;
             for (const auto& pp : wf_pts) {
-                const double term = 1.0 + pp.ret;
-                if (term > 0.0 && std::isfinite(term)) E_base *= term;
+                if (!std::isfinite(pp.ret)) continue;
+                const double Lb = 1.0;
+                sum_lr_base += Lb * pp.ret;
+                sum_l2_base += Lb * Lb;
+                E_base += Lb * pp.ret;
                 if (E_base > peak_base) peak_base = E_base;
-                const double dd = (peak_base > 0.0) ? (peak_base - E_base) / peak_base : 0.0;
-                sum_dd2_base += dd * dd;
+                const double dd = (peak_base > 0.0) ? (peak_base - E_base) / peak_base : std::numeric_limits<double>::quiet_NaN();
+                if (std::isfinite(dd)) sum_dd2_base += dd * dd;
             }
-            const double dd_rms_base = std::sqrt(sum_dd2_base / std::max(1.0, D_oos));
-            const double oos_baseline_score = (dd_rms_base > 1e-12 && std::isfinite(dd_rms_base))
-                ? ((E_base - 1.0) / dd_rms_base)
-                : std::numeric_limits<double>::quiet_NaN();
+            const double dd_rms_base = std::sqrt(sum_dd2_base / std::max(1.0, T_oos));
+            const double risk_scale_base =
+                (sum_l2_base > 1e-12 && std::isfinite(sum_l2_base)) ? std::sqrt(252.0 / sum_l2_base)
+                                                                    : std::numeric_limits<double>::quiet_NaN();
+            const double oos_baseline_score =
+                (dd_rms_base > 1e-12 && std::isfinite(dd_rms_base) && std::isfinite(risk_scale_base))
+                    ? (risk_scale_base * ((252.0 / std::max(1.0, T_oos)) * sum_lr_base) / dd_rms_base)
+                    : std::numeric_limits<double>::quiet_NaN();
 
             const double avg_theta = (cnt_policy > 0) ? (sum_theta / static_cast<double>(cnt_policy)) : std::numeric_limits<double>::quiet_NaN();
-            const double avg_c_scale = (cnt_policy > 0) ? (sum_c / static_cast<double>(cnt_policy)) : std::numeric_limits<double>::quiet_NaN();
+            const double avg_c_scale = risk_scale_oos;
             const double avg_theta_raw_low = (cnt_xlow > 0) ? (sum_xlow / static_cast<double>(cnt_xlow)) : std::numeric_limits<double>::quiet_NaN();
             const double avg_theta_raw_high = (cnt_xhigh > 0) ? (sum_xhigh / static_cast<double>(cnt_xhigh)) : std::numeric_limits<double>::quiet_NaN();
+            const double avg_val_score = (cnt_val_score > 0) ? (sum_val_score / static_cast<double>(cnt_val_score)) : std::numeric_limits<double>::quiet_NaN();
 
             fs::path csv_path = factor_out_dir / ("leverage_" + code + "_" + factor_name + ".csv");
+            for (auto& p : wf_pts) {
+                p.c_scale = avg_c_scale;
+            }
             write_wf_csv(csv_path, wf_pts, code, factor_name);
 
             append_wf_summary(summary_path, code, factor_name,
-                              train_window, step, zwin,
+                              train_window, val_window, step, zwin,
                               oos_score, oos_baseline_score,
                               E, dd_rms, trade_days, wf_pts.size(),
-                              avg_theta, avg_c_scale);
+                              avg_theta, avg_c_scale, avg_val_score);
 
             fs::path dist_png = factor_out_dir / ("distribution_" + code + "_" + factor_name + ".png");
 
@@ -1173,4 +1235,11 @@ int main(int argc, char** argv) {
 
     std::cout << "Done. Outputs in: " << out_dir_base << "\n";
     return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR: " << e.what() << "\n";
+        return 2;
+    } catch (...) {
+        std::cerr << "ERROR: unknown exception\n";
+        return 2;
+    }
 }

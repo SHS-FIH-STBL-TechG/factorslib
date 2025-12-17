@@ -333,7 +333,7 @@ add_library(factor_basic
         src/factors/Kline/volume_ar_forecast_factor.cpp
         src/factors/Kline/high_volume_remaining_factor.cpp
         src/factors/Kline/kalman_forecast_z_factor.cpp
-        src/factors/Kline/gls_drift_z_factor.cpp
+        src/factors/Kline/wls_drift_z_factor.cpp
         src/factors/Kline/hmm2_logodds_factor.cpp
         src/factors/Kline/bayes_drift_logodds_factor.cpp
         src/factors/Kline_new/haar_wavelet_trend_factor.cpp
@@ -346,7 +346,7 @@ target_include_directories(factor_basic PUBLIC
 
 # New intuitive leverage tool
 add_executable(factor_leverage_tool_new
-        src/tools/factor_leverage_tool_new.cpp
+        src/tools/factor_leverage_tool.cpp
         src/tools/factor_leverage_optimizer.cpp
         src/tools/kline_csv_loader.cpp
         src/tools/factor_leverage_tool_config.cpp

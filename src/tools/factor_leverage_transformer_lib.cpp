@@ -11,6 +11,11 @@ namespace factorlib::tools {
 
 namespace {
 
+/**
+ * @brief 去重并排序股票代码列表
+ * @param codes 股票代码列表（可能包含重复和空字符串）
+ * @return 去重排序后的代码列表
+ */
 std::vector<std::string> dedup_codes(std::vector<std::string> codes) {
     codes.erase(std::remove_if(codes.begin(), codes.end(),
                                [](const std::string& c) { return c.empty(); }),
@@ -35,7 +40,7 @@ FactorLeverageTransformer::~FactorLeverageTransformer() {
 
 void FactorLeverageTransformer::start() {
     if (_running.exchange(true, std::memory_order_acq_rel)) {
-        return;
+        return;  // 已经在运行，直接返回
     }
     if (_specs.empty()) {
         LOG_WARN("FactorLeverageTransformer 启动失败：spec 列表为空");
@@ -48,6 +53,7 @@ void FactorLeverageTransformer::start() {
         return;
     }
 
+    // 在 DataBus 上注册所有输出 topic
     auto& bus = DataBus::instance();
     for (const auto& spec : _specs) {
         if (spec.output_topic.empty()) {
@@ -57,10 +63,12 @@ void FactorLeverageTransformer::start() {
         bus.register_topic<double>(spec.output_topic, _output_capacity);
     }
 
+    // 启动工作线程
     _stop_requested.store(false, std::memory_order_release);
     _subscriptions.clear();
     _worker = std::thread(&FactorLeverageTransformer::worker_loop, this);
 
+    // 订阅所有 (spec, code) 组合
     for (std::size_t spec_idx = 0; spec_idx < _specs.size(); ++spec_idx) {
         const auto& spec = _specs[spec_idx];
         if (spec.input_topic.empty() || spec.output_topic.empty()) {
@@ -82,7 +90,7 @@ void FactorLeverageTransformer::start() {
 
 void FactorLeverageTransformer::stop() {
     if (!_running.exchange(false, std::memory_order_acq_rel)) {
-        return;
+        return;  // 已经停止，直接返回
     }
     {
         std::lock_guard<std::mutex> lk(_queue_mtx);
@@ -97,6 +105,7 @@ void FactorLeverageTransformer::stop() {
         bus.unsubscribe(h);
     }
 
+    // 唤醒工作线程并等待其退出
     _queue_cv.notify_all();
     if (_worker.joinable()) {
         _worker.join();
@@ -121,7 +130,7 @@ void FactorLeverageTransformer::enqueue_event(std::size_t spec_index,
                                               int64_t ts_ms,
                                               double value) {
     if (!_running.load(std::memory_order_acquire)) {
-        return;
+        return;  // 未运行，忽略事件
     }
     Event evt;
     evt.spec_index = spec_index;
@@ -131,11 +140,11 @@ void FactorLeverageTransformer::enqueue_event(std::size_t spec_index,
     {
         std::lock_guard<std::mutex> lk(_queue_mtx);
         if (_stop_requested.load(std::memory_order_acquire)) {
-            return;
+            return;  // 已请求停止，不再入队
         }
         _queue.emplace_back(std::move(evt));
     }
-    _queue_cv.notify_one();
+    _queue_cv.notify_one();  // 唤醒工作线程
 }
 
 void FactorLeverageTransformer::worker_loop() {
@@ -143,40 +152,46 @@ void FactorLeverageTransformer::worker_loop() {
         Event evt;
         {
             std::unique_lock<std::mutex> lk(_queue_mtx);
+            // 等待队列非空或收到停止请求
             _queue_cv.wait(lk, [this] {
                 return _stop_requested.load(std::memory_order_acquire) || !_queue.empty();
             });
+            // 停止请求且队列为空，退出循环
             if (_stop_requested.load(std::memory_order_acquire) && _queue.empty()) {
                 break;
             }
             evt = std::move(_queue.front());
             _queue.pop_front();
         }
-        process_event(evt);
+        process_event(evt);  // 处理事件
     }
 }
 
 void FactorLeverageTransformer::process_event(const Event& evt) {
     if (evt.spec_index >= _specs.size()) {
-        return;
+        return;  // 无效的 spec 索引
     }
     const auto& spec = _specs[evt.spec_index];
     if (!std::isfinite(evt.value) || spec.output_topic.empty()) {
-        return;
+        return;  // 无效的因子值或输出 topic
     }
 
+    // 计算杠杆值
     double leverage_value = 0.0;
     {
         std::lock_guard<std::mutex> lk(_state_mtx);
         auto key = make_state_key(spec.input_topic, evt.code);
+        // 查找或创建对应的转换状态
         auto [it, inserted] = _states.try_emplace(key, spec.window);
+        // 使用滑窗高斯化转换器计算 z-score
         auto leverage = it->second.leverage.transform(evt.value);
         if (!leverage.has_value()) {
-            return;
+            return;  // 转换失败（窗口未满或其他原因）
         }
         leverage_value = *leverage;
     }
 
+    // 发布杠杆值到输出 topic
     safe_publish<double>(spec.output_topic, evt.code, evt.ts_ms, leverage_value);
 }
 

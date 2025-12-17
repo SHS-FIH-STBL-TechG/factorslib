@@ -177,24 +177,33 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
     best.profile = analyze_profile(x_raw);
     auto cand = candidates_for_kind(best.profile.kind);
 
-    // 基准 score：不使用因子，使用裁剪后的全样本 next_ret（长度约等于 D-1），等价于 T=D 的 1x 持有。
-    if (D_sample_days > 0 && !full_next_ret.empty()) {
+    // 基准 score：不使用因子，等价于 L_t=1 的满仓持有（单利口径）。
+    if (!full_next_ret.empty()) {
+        const double T_base = static_cast<double>(full_next_ret.size());
         double E_base = 1.0;
         double peak = 1.0;
         double sum_dd2 = 0.0;
+        double sum_lr = 0.0;
+        double sum_l2 = 0.0;
+
         for (double r : full_next_ret) {
-            double term = 1.0 + r;
-            if (!(term > 0.0) || !std::isfinite(term)) {
-                continue;
-            }
-            E_base *= term;
+            if (!std::isfinite(r)) return best;
+            const double L = 1.0;
+            sum_lr += L * r;
+            sum_l2 += L * L;
+
+            E_base += L * r;
             if (E_base > peak) peak = E_base;
-            double dd = (peak > 0.0) ? (peak - E_base) / peak : 0.0;
+            const double dd = (peak > 0.0) ? (peak - E_base) / peak : std::numeric_limits<double>::quiet_NaN();
+            if (!std::isfinite(dd)) return best;
             sum_dd2 += dd * dd;
         }
-        double dd_rms_base = std::sqrt(sum_dd2 / std::max(1.0, static_cast<double>(D_sample_days)));
-        if (dd_rms_base > 1e-12 && std::isfinite(dd_rms_base)) {
-            best.baseline_score = (E_base - 1.0) / dd_rms_base;
+
+        const double dd_rms_base = std::sqrt(sum_dd2 / std::max(1.0, T_base));
+        if (dd_rms_base > 1e-12 && std::isfinite(dd_rms_base) && sum_l2 > 1e-12) {
+            const double risk_scale = std::sqrt(252.0 / sum_l2);
+            const double ann_mean = (252.0 / std::max(1.0, T_base)) * sum_lr;
+            best.baseline_score = risk_scale * ann_mean / dd_rms_base;
         }
     }
 
@@ -234,8 +243,6 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
 
     auto eval_one = [&](double theta, TradeMode mode, int polarity) -> std::optional<ThresholdSearchResult> {
         std::vector<double> b(z.size(), 0.0);
-        double sum_b2 = 0.0;
-        double max_abs_b = 0.0;
         std::size_t trades = 0;
 
         double z_cap = std::max(z_cap_global, theta + 1e-3);
@@ -273,9 +280,6 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
 
             double bt = static_cast<double>(polarity * sgn) * mag;
             b[t] = bt;
-
-            sum_b2 += bt * bt;
-            max_abs_b = std::max(max_abs_b, std::abs(bt));
             trades += 1;
         }
 
@@ -283,41 +287,42 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
             return std::nullopt;
         }
 
-        if (sum_b2 <= 1e-12 || max_abs_b <= 1e-12) {
-            return std::nullopt;
-        }
-
-        double c_risk = std::sqrt(static_cast<double>(D_sample_days) / sum_b2);
-        double c_max = _cfg.max_leverage / max_abs_b;
-        double c = std::min(c_risk, c_max);
-
-        std::vector<double> equity(z.size(), 1.0);
+        const double T = static_cast<double>(z.size());
         double E = 1.0;
         double peak = 1.0;
         double sum_dd2 = 0.0;
+        double sum_lr = 0.0;
+        double sum_l2 = 0.0;
 
         for (std::size_t t = 0; t < z.size(); ++t) {
-            double L = c * b[t];
-            L = finalize_leverage(L, b[t]);
-
-            double term = 1.0 + L * next_ret[t];
-            if (!(term > 0.0) || !std::isfinite(term)) {
+            const double L = b[t];  // Final_simple 使用 b_raw 作为 L_t
+            if (!std::isfinite(L) || !std::isfinite(next_ret[t])) {
                 return std::nullopt;
             }
-            E *= term;
-            equity[t] = E;
+            sum_lr += L * next_ret[t];
+            sum_l2 += L * L;
 
+            // 单利权益：E_t = 1 + sum(L r)
+            E += L * next_ret[t];
             if (E > peak) peak = E;
-            double dd = (peak > 0.0) ? (peak - E) / peak : 0.0;
+            const double dd = (peak > 0.0) ? (peak - E) / peak : std::numeric_limits<double>::quiet_NaN();
+            if (!std::isfinite(dd)) {
+                return std::nullopt;
+            }
             sum_dd2 += dd * dd;
         }
 
-        double dd_rms = std::sqrt(sum_dd2 / std::max(1.0, static_cast<double>(D_sample_days)));
+        const double dd_rms = std::sqrt(sum_dd2 / std::max(1.0, T));
         if (!(dd_rms > 1e-12) || !std::isfinite(dd_rms)) {
             return std::nullopt;
         }
+        if (!(sum_l2 > 1e-12) || !std::isfinite(sum_l2)) {
+            return std::nullopt;
+        }
 
-        double score = (E - 1.0) / dd_rms;
+        const double risk_scale = std::sqrt(252.0 / sum_l2);
+        const double ann_mean = (252.0 / std::max(1.0, T)) * sum_lr;
+        const double score = risk_scale * ann_mean / dd_rms;
 
         ThresholdSearchResult r;
         r.ok = true;
@@ -325,7 +330,7 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
         r.score = score;
         r.final_equity = E;
         r.dd_rms = dd_rms;
-        r.c_scale = c;
+        r.c_scale = risk_scale;
         r.z_cap = std::max(z_cap_global, theta + 1e-3);
         r.mode = mode;
         r.polarity = polarity;
@@ -356,6 +361,219 @@ ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold(const std::
     return best;
 }
 
+ThresholdSearchResult FactorLeverageOptimizer::search_best_threshold_train_val(const std::vector<int64_t>& ts,
+                                                                               const std::vector<double>& x_raw,
+                                                                               const std::vector<double>& z,
+                                                                               const std::vector<double>& next_ret,
+                                                                               int train_size,
+                                                                               int val_size) const {
+    ThresholdSearchResult best;
+    if (ts.size() != z.size() || z.size() != next_ret.size() || z.empty()) {
+        return best;
+    }
+    if (train_size <= 0 || val_size <= 0) {
+        return best;
+    }
+    if (static_cast<std::size_t>(train_size + val_size) != z.size()) {
+        return best;
+    }
+    if (train_size < 10 || val_size < 10) {
+        return best;
+    }
+
+    const std::size_t train_n = static_cast<std::size_t>(train_size);
+    const std::size_t val_begin = train_n;
+    const std::size_t val_end = z.size();
+
+    // 训练集：用于分布分析与 raw 阈值（避免信息泄露）
+    std::vector<double> x_train;
+    x_train.reserve(train_n);
+    for (std::size_t i = 0; i < train_n && i < x_raw.size(); ++i) x_train.push_back(x_raw[i]);
+    best.profile = analyze_profile(x_train);
+    auto cand = candidates_for_kind(best.profile.kind);
+
+    std::vector<double> sorted_raw = x_train;
+    std::sort(sorted_raw.begin(), sorted_raw.end());
+    boost::math::normal_distribution<double> norm_cdf;
+
+    auto apply_raw_thresholds = [&](ThresholdSearchResult& r) {
+        r.theta_raw_low = std::numeric_limits<double>::quiet_NaN();
+        r.theta_raw_high = std::numeric_limits<double>::quiet_NaN();
+        if (sorted_raw.empty()) {
+            return;
+        }
+        double p_high = clamp(boost::math::cdf(norm_cdf, r.theta), 0.0, 1.0);
+        double p_low = clamp(1.0 - p_high, 0.0, 1.0);
+        if (r.mode == TradeMode::BothSides || r.mode == TradeMode::NegativeOnly) {
+            r.theta_raw_low = quantile_sorted(sorted_raw, p_low);
+        }
+        if (r.mode == TradeMode::BothSides || r.mode == TradeMode::PositiveOnly) {
+            r.theta_raw_high = quantile_sorted(sorted_raw, p_high);
+        }
+    };
+
+    // z_cap：仅用训练集的 |z| 分布估计
+    std::vector<double> zabs;
+    zabs.reserve(train_n);
+    for (std::size_t i = 0; i < train_n; ++i) zabs.push_back(std::abs(z[i]));
+    std::sort(zabs.begin(), zabs.end());
+    double z_cap_global = quantile_sorted(zabs, _cfg.z_cap_quantile);
+    z_cap_global = clamp(z_cap_global, _cfg.z_cap_min, _cfg.z_cap_max);
+
+    const double T_val = static_cast<double>(val_size);
+    // 年均交易日下限（按验证段长度折算）
+    std::size_t min_trade_days = 0;
+    {
+        double years = T_val / 252.0;
+        min_trade_days = static_cast<std::size_t>(std::ceil(years * 50.0 - 1e-12));
+    }
+
+    auto eval_one = [&](double theta, TradeMode mode, int polarity) -> std::optional<ThresholdSearchResult> {
+        const double z_cap = std::max(z_cap_global, theta + 1e-3);
+
+        double E = 1.0;
+        double peak = 1.0;
+        double sum_dd2 = 0.0;
+        double sum_lr = 0.0;
+        double sum_l2 = 0.0;
+        std::size_t trades = 0;
+
+        for (std::size_t t = val_begin; t < val_end; ++t) {
+            const double zv = z[t];
+
+            bool active = false;
+            int sgn = 0;
+            if (mode == TradeMode::BothSides) {
+                if (std::abs(zv) > theta) {
+                    active = true;
+                    sgn = (zv > 0) ? +1 : -1;
+                }
+            } else if (mode == TradeMode::PositiveOnly) {
+                if (zv > theta) {
+                    active = true;
+                    sgn = +1;
+                }
+            } else {
+                if (zv < -theta) {
+                    active = true;
+                    sgn = -1;
+                }
+            }
+
+            double L = 0.0;
+            if (active) {
+                const double a = std::abs(zv);
+                double frac = (z_cap > theta) ? (a - theta) / (z_cap - theta) : 0.0;
+                frac = clamp(frac, 0.0, 1.0);
+                const double mag = 1.0 + frac * (_cfg.max_leverage - 1.0);
+                L = static_cast<double>(polarity * sgn) * mag;
+                trades += 1;
+            }
+
+            if (!std::isfinite(L) || !std::isfinite(next_ret[t])) {
+                return std::nullopt;
+            }
+
+            sum_lr += L * next_ret[t];
+            sum_l2 += L * L;
+
+            // 单利权益：E_t = 1 + sum(L r)
+            E += L * next_ret[t];
+            if (E > peak) peak = E;
+            const double dd = (peak > 0.0) ? (peak - E) / peak : std::numeric_limits<double>::quiet_NaN();
+            if (!std::isfinite(dd)) return std::nullopt;
+            sum_dd2 += dd * dd;
+        }
+
+        if (trades < min_trade_days) {
+            return std::nullopt;
+        }
+        if (!(sum_l2 > 1e-12) || !std::isfinite(sum_l2)) {
+            return std::nullopt;
+        }
+
+        const double dd_rms = std::sqrt(sum_dd2 / std::max(1.0, T_val));
+        if (!(dd_rms > 1e-12) || !std::isfinite(dd_rms)) {
+            return std::nullopt;
+        }
+
+        const double risk_scale = std::sqrt(252.0 / sum_l2);
+        const double ann_mean = (252.0 / std::max(1.0, T_val)) * sum_lr;
+        const double score = risk_scale * ann_mean / dd_rms;
+
+        ThresholdSearchResult r;
+        r.ok = true;
+        r.theta = theta;
+        r.score = score;
+        r.final_equity = E;
+        r.dd_rms = dd_rms;
+        r.c_scale = risk_scale;
+        r.z_cap = z_cap;
+        r.mode = mode;
+        r.polarity = polarity;
+        r.trade_days = trades;
+        r.D_sample_days = static_cast<int>(train_n + static_cast<std::size_t>(val_size));
+        r.T_trade_days = static_cast<int>(val_size);
+        r.profile = best.profile;
+        return r;
+    };
+
+    for (double theta = _cfg.theta_min; theta <= _cfg.theta_max + 1e-12; theta += _cfg.theta_step) {
+        for (const auto& c : cand) {
+            auto r = eval_one(theta, c.mode, c.polarity);
+            if (!r.has_value()) continue;
+            const auto& rr = r.value();
+            if (!best.ok || rr.score > best.score ||
+                (std::abs(rr.score - best.score) < 1e-12 && rr.theta < best.theta)) {
+                best = rr;
+            }
+        }
+    }
+
+    if (best.ok) {
+        apply_raw_thresholds(best);
+
+        // 基准 score：验证段内的 1x 满仓持有
+        std::vector<double> val_rets;
+        val_rets.reserve(static_cast<std::size_t>(val_size));
+        for (std::size_t t = val_begin; t < val_end; ++t) {
+            if (std::isfinite(next_ret[t])) val_rets.push_back(next_ret[t]);
+        }
+        if (!val_rets.empty()) {
+            const double T_base = static_cast<double>(val_rets.size());
+            double E_base = 1.0;
+            double peak = 1.0;
+            double sum_dd2 = 0.0;
+            double sum_lr = 0.0;
+            double sum_l2 = 0.0;
+
+            for (double r : val_rets) {
+                const double L = 1.0;
+                sum_lr += L * r;
+                sum_l2 += L * L;
+
+                E_base += L * r;
+                if (E_base > peak) peak = E_base;
+                const double dd = (peak > 0.0) ? (peak - E_base) / peak : std::numeric_limits<double>::quiet_NaN();
+                if (!std::isfinite(dd)) {
+                    best.baseline_score = std::numeric_limits<double>::quiet_NaN();
+                    break;
+                }
+                sum_dd2 += dd * dd;
+            }
+
+            const double dd_rms_base = std::sqrt(sum_dd2 / std::max(1.0, T_base));
+            if (dd_rms_base > 1e-12 && std::isfinite(dd_rms_base) && sum_l2 > 1e-12) {
+                const double risk_scale = std::sqrt(252.0 / sum_l2);
+                const double ann_mean = (252.0 / std::max(1.0, T_base)) * sum_lr;
+                best.baseline_score = risk_scale * ann_mean / dd_rms_base;
+            }
+        }
+    }
+
+    return best;
+}
+
 std::vector<LeveragePoint> FactorLeverageOptimizer::build_leverage_series(const std::vector<int64_t>& ts,
                                                                           const std::vector<double>& x_raw,
                                                                           const std::vector<double>& z,
@@ -374,8 +592,6 @@ std::vector<LeveragePoint> FactorLeverageOptimizer::build_leverage_series(const 
     double z_cap = std::max(z_cap_global, best.theta + 1e-3);
 
     std::vector<double> b(z.size(), 0.0);
-    double sum_b2 = 0.0;
-    double max_abs_b = 0.0;
 
     for (std::size_t t = 0; t < z.size(); ++t) {
         double zv = z[t];
@@ -411,14 +627,7 @@ std::vector<LeveragePoint> FactorLeverageOptimizer::build_leverage_series(const 
 
         double bt = static_cast<double>(best.polarity * sgn) * mag;
         b[t] = bt;
-
-        sum_b2 += bt * bt;
-        max_abs_b = std::max(max_abs_b, std::abs(bt));
     }
-
-    double c_risk = std::sqrt(static_cast<double>(D_sample_days) / std::max(1e-12, sum_b2));
-    double c_max = _cfg.max_leverage / std::max(1e-12, max_abs_b);
-    double c = std::min(c_risk, c_max);
 
     out.reserve(z.size());
     double E = 1.0;
@@ -432,18 +641,17 @@ std::vector<LeveragePoint> FactorLeverageOptimizer::build_leverage_series(const 
         p.b_raw = b[t];
         p.active = (b[t] != 0.0);
 
-        double L = c * b[t];
+        // Final_simple 使用 b_raw 作为 L_t（leverage 字段直接记录 b_raw）
+        double L = b[t];
         L = finalize_leverage(L, b[t]);
         p.leverage = L;
         p.ret = next_ret[t];
 
-        double term = 1.0 + L * next_ret[t];
-        if (term > 0.0 && std::isfinite(term)) {
-            E *= term;
-        }
+        // 单利权益：E_t = 1 + sum(L r)
+        E += L * next_ret[t];
         p.equity = E;
         if (E > peak) peak = E;
-        p.drawdown = (peak > 0.0) ? (peak - E) / peak : 0.0;
+        p.drawdown = (peak > 0.0) ? (peak - E) / peak : std::numeric_limits<double>::quiet_NaN();
 
         out.push_back(p);
     }
