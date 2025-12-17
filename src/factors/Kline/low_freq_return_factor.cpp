@@ -5,6 +5,18 @@
 
 namespace factorlib {
 
+/*
+（LowFreqReturnFactor）
+
+- 输出 topic：`kline/ret_lowfreq_mu10`
+- 含义：用频谱低频能量占比（慢变化成分强弱）乘以滑窗平均收益（方向），得到“趋势强度 × 方向”的组合指标。
+- 典型场景：
+  - 慢涨趋势：低频占比高且均值收益为正，输出显著为正。
+  - 慢跌趋势：低频占比高但均值收益为负，输出显著为负。
+  - 高频震荡：低频占比低，输出幅度趋小（即使均值收益略偏正/负）。
+- 参数提示：`spectral_window` 控制频谱分辨率；`mean_window` 控制方向均值平滑程度；`low_freq_bins` 决定“低频”边界。
+*/
+
 namespace {
 constexpr const char* TOP_LOW_FREQ_RET = "kline/ret_lowfreq_mu10"; // F7
 }

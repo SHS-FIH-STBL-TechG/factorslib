@@ -10,6 +10,19 @@
 
 namespace factorlib {
 
+/*
+（VolumePriceStructureFactor）
+
+- 输出 topics：
+  - `kline/ret_logvol_corr`：窗口内对数收益与 log(成交量) 的相关系数
+  - `kline/pv_pca1_ret_loading`：量价（收益、log量、振幅）三维协方差的第一主成分中“收益维度载荷”
+- 典型场景：
+  - 放量上涨：收益与 log 量正相关，`ret_logvol_corr` 往往为正。
+  - 缩量上涨/放量下跌：相关可能为负，提示“量价背离”或抛压主导。
+  - 振幅主导的行情：若振幅维度解释力更强，第一主成分可能不以收益为主，`pv_pca1_ret_loading` 的绝对值会变小。
+- 参数提示：`window_size` 越大统计越稳但反应更慢；对异常 volume/close 会跳过样本以避免污染协方差。
+*/
+
 namespace {
 /**
  * @brief topic 名称：

@@ -6,6 +6,20 @@
 
 namespace factorlib {
 
+/*
+（HighVolumeRemainingFactor）
+
+- 输出 topic：`kline/vol_high_remaining`
+- 含义：把“成交量是否处于高分位（如 80% 分位）”视为二元状态，估计当前高量状态还将持续多久（期望剩余长度）。
+- 典型场景：
+  - 放量突破/消息驱动：连续多日高量，`expected_remaining` 往往上升，提示高量可能继续。
+  - 缩量震荡：不满足高量阈值时输出 0。
+  - 高量刚出现：age 很小但历史上高量通常持续较久时，输出会偏大。
+- 参数提示：
+  - `volume_window` 控制“高量阈值”的滚动分位数估计稳定性；
+  - `run_history_window/max_run_length` 控制对“历史高量持续期分布”的记忆长度与上界。
+*/
+
 namespace {
 constexpr const char* TOP_HIGH_VOL_REMAIN = "kline/vol_high_remaining"; // F14
 }

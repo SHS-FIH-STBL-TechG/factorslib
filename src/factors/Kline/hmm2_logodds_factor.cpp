@@ -7,6 +7,19 @@
 
 namespace factorlib {
 
+/*
+（Hmm2LogOddsFactor）
+
+- 输出 topic：`kline/hmm2_logodds`
+- 含义：两状态（上行/下行）高斯 HMM 的上行后验概率 $\gamma_t$ 的 logit：
+  $F_t=\log(\gamma_t/(1-\gamma_t))$。值越大，上行状态越“确定”；越小越偏下行。
+- 典型场景：
+  - 单边上涨：收益序列连续为正且波动稳定，$\gamma_t$ 上升，因子值转正并走高。
+  - 单边下跌：$\gamma_t$ 下降，因子值转负并走低。
+  - 震荡市：$\gamma_t$ 在 0.5 附近来回，因子值围绕 0 波动。
+- 参数提示：`window_size` 越大越稳但滞后；`sigma_up/sigma_down` 过小会导致状态切换更“极端”。
+*/
+
 namespace {
 
 constexpr const char* TOP_HMM2_LOGODDS = "kline/hmm2_logodds";

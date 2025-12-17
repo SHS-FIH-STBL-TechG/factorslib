@@ -9,6 +9,19 @@
 
 namespace factorlib {
 
+/*
+（BayesDriftLogOddsFactor）
+
+- 输出 topic：`kline/bayes_drift_logodds`
+- 含义：在滑窗内用“带方差权重”的贝叶斯更新估计收益漂移 $\mu$，输出 $P(\mu>0)$ 的 logit。
+  直觉上：近期加权平均收益越偏正，值越大；越偏负，值越小。
+- 典型场景：
+  - 上涨但波动较大：若收益持续为正，即使波动大，后验仍可能显著偏正（输出为正）。
+  - 下跌行情：后验偏负（输出为负）。
+  - 缺失 high/low：Parkinson 波动不可算时会跳过该样本权重更新，可能导致当日不输出。
+- 参数提示：`sigma2_floor` 用于避免权重爆炸；`tau0` 控制先验强度（越大越“相信数据”）。
+*/
+
 namespace {
 
 constexpr const char* TOP_BAYES_DRIFT_LOGODDS = "kline/bayes_drift_logodds";

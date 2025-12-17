@@ -9,6 +9,18 @@
 
 namespace factorlib {
 
+/*
+（VolumeArForecastFactor）
+
+- 输出 topic：`kline/vol_ar1_pred_ratio`
+- 含义：对 log(成交量) 拟合 AR(1) 并做未来 horizon 步预测，将预测均值与当前均量基准相比，输出 $\log(\bar V_{\mathrm{pred}}/\bar V_{\mathrm{base}})$。
+- 典型场景：
+  - 量能抬升：AR 模型预测未来量能上行，输出为正；适用于捕捉“放量延续”。
+  - 量能衰退：预测未来量能回落，输出为负；常见于热度消退或趋势末期。
+  - 偶发脉冲量：若仅一天异常放量但回归很快，预测均值可能不显著，输出回到 0 附近。
+- 参数提示：`ar_window` 影响 AR 拟合稳定性；`ma_window` 决定基准量能平滑程度；`horizon` 决定预测前瞻长度。
+*/
+
 namespace {
 constexpr const char* TOP_VOL_AR_RATIO = "kline/vol_ar1_pred_ratio"; // F10
 constexpr double kEps = 1e-12;

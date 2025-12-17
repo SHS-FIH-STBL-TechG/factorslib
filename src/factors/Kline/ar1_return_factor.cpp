@@ -6,6 +6,18 @@
 
 namespace factorlib {
 
+/*
+（Ar1ReturnFactor）
+
+- 输出 topic：`kline/ar1_return_coeff`
+- 含义：在滑窗内对对数收益做 AR(1) 拟合，输出系数 $\phi$（惯性/均值回复强弱）。
+- 典型场景：
+  - 趋势延续：若近 N 日收益同向、惯性强，常见 $\phi>0$（越接近 1 越“粘”）。
+  - 均值回复：若涨跌交替、回撤快，常见 $\phi<0$。
+  - 噪声/随机游走：若无明显结构，$\phi\approx 0$。
+- 参数建议：`window_size`（N）越大越平滑但反应更慢；越小越敏感但噪声更大。
+*/
+
 // topic 名称：56. AR1 收益自回归系数
 constexpr const char* TOP_AR1_RETURN_COEFF = "kline/ar1_return_coeff";
 

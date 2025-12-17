@@ -5,6 +5,19 @@
 
 namespace factorlib {
 
+/*
+（KalmanForecastZFactor）
+
+- 输出 topic：`kline/kalman_forecast_z`
+- 含义：对对数价格做“水平+斜率”的卡尔曼滤波（LLT/局部线性趋势），在每个时点给出 k 步前瞻的“预测收益 z 值”。
+  直觉上：预测上行幅度（相对方差）越大，值越大；预测下行越强，值越小。
+- 典型场景：
+  - 趋势行情：斜率项稳定为正（或负），预测 z 值持续偏正（或偏负）。
+  - 突发跳变：滤波器会逐步追踪，z 值可能先尖峰后回落。
+  - 高波动无趋势：测量噪声大，预测不确定性高，z 值更接近 0。
+- 参数提示：`horizon_k` 为预测步长；`vol_window/cR/cB` 决定噪声/过程方差尺度（过大更平滑，过小更敏感）。
+*/
+
 constexpr const char* TOP_KALMAN_FORECAST_Z = "kline/kalman_forecast_z";
 
 static inline double clamp(double x, double lo, double hi) {
@@ -188,4 +201,3 @@ void KalmanForecastZFactor::on_bar(const Bar& b) {
 }
 
 } // namespace factorlib
-

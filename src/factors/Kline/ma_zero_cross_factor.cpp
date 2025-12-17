@@ -10,6 +10,18 @@
 
 namespace factorlib {
 
+/*
+（MaZeroCrossFactor）
+
+- 输出 topic：`kline/ma_zero_cross_rate`
+- 含义：对滑窗内收盘价去均值后，统计符号序列的零穿越率（0~1）。越高表示越“来回震荡”。
+- 典型场景：
+  - 横盘/震荡：价格围绕均值上下穿越频繁，零穿越率高。
+  - 单边趋势：价格长期在均值一侧，零穿越率低。
+  - 高噪声小波动：即使幅度小，只要频繁上下跳，也会推高该值。
+- 参数提示：`window_size` 越小越敏感（更容易被噪声影响）；越大越稳定但滞后。
+*/
+
 namespace {
 constexpr const char* TOP_MA_ZERO_CROSS_RATE = "kline/ma_zero_cross_rate";   // 53
 } // anonymous namespace

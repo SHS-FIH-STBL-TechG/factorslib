@@ -9,6 +9,24 @@
 
 namespace factorlib {
 
+/*
+（SpectralAutocorrFactor）
+
+- 输出 topics：
+  - `kline/ret_spec_lowfreq_ratio`：低频能量占比（慢变化强弱）
+  - `kline/ret_spec_centroid`：频谱重心（高频占比越大越偏高）
+  - `kline/ret_spec_slope`：频谱斜率（刻画能量随频率衰减）
+  - `kline/ret_ac_low_energy` / `kline/ret_ac_high_energy`：自相关能量（周期/记忆强弱）
+  - `kline/ret_ac_peak_count`：自相关峰数量（显著周期个数的粗略度量）
+- 典型场景：
+  - 趋势缓慢推进：低频占比偏高、频谱重心偏低；自相关低阶能量可能较高。
+  - 高频震荡：频谱重心偏高、斜率绝对值变小；零穿越类指标也常偏高。
+  - 周期行情：自相关能量升高且峰数量增加（在设定阈值下）。
+- 参数提示：`window_size` 影响频谱/ACF 统计稳定性；`*_max_lag` 与 `ac_peak_threshold` 共同决定峰统计的“严格程度”。
+
+备注：该类指标更偏“波动/结构描述”，在杠杆工具里可能被归为波动型而默认跳过。
+*/
+
 namespace {
 /**
  * @brief topic 名称：
