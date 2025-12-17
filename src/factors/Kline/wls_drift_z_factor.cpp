@@ -1,4 +1,4 @@
-#include "factors/kline/gls_drift_z_factor.h"
+#include "factors/kline/wls_drift_z_factor.h"
 
 #include <algorithm>
 #include <cmath>
@@ -8,11 +8,11 @@
 namespace factorlib {
 
 /*
-（WlsDriftZFactor；历史命名为 GlsDriftZFactor）
+（WlsDriftZFactor）
 
-- 输出 topic：`kline/gls_drift_z`
-- 含义：该实现本质是 WLS（按方差倒数加权的均值/漂移统计），并非严格 GLS。
-  对收益 $r_t$ 做“按波动倒数加权”的漂移统计，输出近似 z-score：
+- 输出 topic：`kline/wls_drift_z`
+- 含义：该实现本质是 WLS（按方差倒数加权的均值/漂移统计）。
+  对收益 $r_t$ 做"按波动倒数加权"的漂移统计，输出近似 z-score：
   $F_t=\frac{\sum w_i r_i}{\sqrt{\sum w_i}}$，其中 $w_i \approx 1/\sigma_i^2$（$\sigma_i^2$ 用 Parkinson 区间波动估计）。
 - 典型场景：
   - 低波动稳步上涨：$w_i$ 较大且 $r_i$ 多为正，$F_t$ 更容易显著为正。
@@ -23,7 +23,7 @@ namespace factorlib {
 
 namespace {
 
-constexpr const char* TOP_GLS_DRIFT_Z = "kline/gls_drift_z";
+constexpr const char* TOP_WLS_DRIFT_Z = "kline/wls_drift_z";
 
 double clamp(double x, double lo, double hi) {
     return std::max(lo, std::min(hi, x));
@@ -36,34 +36,34 @@ double parkinson_sigma2(const Bar& b) {
     return (denom > 0.0) ? (x * x / denom) : std::numeric_limits<double>::quiet_NaN();
 }
 
-void validate_config(const GlsDriftZConfig& cfg) {
+void validate_config(const WlsDriftZConfig& cfg) {
     if (cfg.window_size <= 0) {
-        throw std::invalid_argument("GlsDriftZConfig.window_size must be > 0");
+        throw std::invalid_argument("WlsDriftZConfig.window_size must be > 0");
     }
     if (cfg.min_obs <= 0) {
-        throw std::invalid_argument("GlsDriftZConfig.min_obs must be > 0");
+        throw std::invalid_argument("WlsDriftZConfig.min_obs must be > 0");
     }
     if (cfg.min_obs > cfg.window_size) {
-        throw std::invalid_argument("GlsDriftZConfig.min_obs must be <= window_size");
+        throw std::invalid_argument("WlsDriftZConfig.min_obs must be <= window_size");
     }
     if (!(cfg.sigma2_floor > 0.0) || !std::isfinite(cfg.sigma2_floor)) {
-        throw std::invalid_argument("GlsDriftZConfig.sigma2_floor must be finite and > 0");
+        throw std::invalid_argument("WlsDriftZConfig.sigma2_floor must be finite and > 0");
     }
 }
 
 } // namespace
 
-GlsDriftZFactor::CodeState::CodeState(const GlsDriftZConfig& cfg) {
+WlsDriftZFactor::CodeState::CodeState(const WlsDriftZConfig& cfg) {
     (void)cfg;
 }
 
-double GlsDriftZFactor::CodeState::value() const {
+double WlsDriftZFactor::CodeState::value() const {
     if (!std::isfinite(sum_w) || !std::isfinite(sum_wr)) return std::numeric_limits<double>::quiet_NaN();
     if (!(sum_w > 0.0)) return std::numeric_limits<double>::quiet_NaN();
     return sum_wr / std::sqrt(sum_w);
 }
 
-bool GlsDriftZFactor::CodeState::push_bar(const Bar& b, const GlsDriftZConfig& cfg) {
+bool WlsDriftZFactor::CodeState::push_bar(const Bar& b, const WlsDriftZConfig& cfg) {
     if (!(b.close > 0.0)) {
         ++bad_close_count;
         return false;
@@ -112,24 +112,24 @@ bool GlsDriftZFactor::CodeState::push_bar(const Bar& b, const GlsDriftZConfig& c
     return ready(cfg);
 }
 
-GlsDriftZFactor::GlsDriftZFactor(const std::vector<Code>& codes, const GlsDriftZConfig& cfg)
-    : BaseFactor("GlsDriftZFactor", codes),
+WlsDriftZFactor::WlsDriftZFactor(const std::vector<Code>& codes, const WlsDriftZConfig& cfg)
+    : BaseFactor("WlsDriftZFactor", codes),
       _cfg(cfg),
       _codes_filter(codes.begin(), codes.end()) {
     validate_config(_cfg);
 }
 
-bool GlsDriftZFactor::accept_code(const Code& code) const {
+bool WlsDriftZFactor::accept_code(const Code& code) const {
     if (_codes_filter.empty()) return true;
     return _codes_filter.find(code) != _codes_filter.end();
 }
 
-void GlsDriftZFactor::register_topics(std::size_t capacity) {
+void WlsDriftZFactor::register_topics(std::size_t capacity) {
     auto& bus = DataBus::instance();
-    bus.register_topic<double>(TOP_GLS_DRIFT_Z, capacity);
+    bus.register_topic<double>(TOP_WLS_DRIFT_Z, capacity);
 }
 
-void GlsDriftZFactor::on_bar(const Bar& b) {
+void WlsDriftZFactor::on_bar(const Bar& b) {
     if (!accept_code(b.instrument_id)) return;
 
     auto it = _states.find(b.instrument_id);
@@ -143,7 +143,7 @@ void GlsDriftZFactor::on_bar(const Bar& b) {
     double v = st.value();
     if (!std::isfinite(v)) return;
     v = clamp(v, -50.0, 50.0);
-    safe_publish<double>(TOP_GLS_DRIFT_Z, b.instrument_id, b.data_time_ms, v);
+    safe_publish<double>(TOP_WLS_DRIFT_Z, b.instrument_id, b.data_time_ms, v);
 }
 
 } // namespace factorlib

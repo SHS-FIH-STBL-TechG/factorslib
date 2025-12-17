@@ -1,4 +1,4 @@
-#include "factors/kline/gls_drift_z_factor.h"
+#include "factors/kline/wls_drift_z_factor.h"
 
 #include <gtest/gtest.h>
 
@@ -7,9 +7,9 @@
 
 namespace factorlib {
 
-class TestGlsDriftZFactor : public GlsDriftZFactor {
+class TestWlsDriftZFactor : public WlsDriftZFactor {
 public:
-    using GlsDriftZFactor::GlsDriftZFactor;
+    using WlsDriftZFactor::WlsDriftZFactor;
     void on_quote(const QuoteDepth&) override {}
     void on_tick(const CombinedTick&) override {}
 };
@@ -36,29 +36,28 @@ static std::vector<Bar> makeTrendBars(const std::string& code, int n, double sta
     return bars;
 }
 
-TEST(GlsDriftZFactorTest, UpDownSign) {
+TEST(WlsDriftZFactorTest, UpDownSign) {
     DataBus::instance().reset();
-    TestGlsDriftZFactor::register_topics(256);
+    TestWlsDriftZFactor::register_topics(256);
 
-    TestGlsDriftZFactor up({"000001.SZ"});
+    TestWlsDriftZFactor up({"000001.SZ"});
     auto upBars = makeTrendBars("000001.SZ", 30, 100.0, 1.0);
     for (const auto& b : upBars) up.on_bar(b);
     double v_up = 0.0;
-    EXPECT_TRUE(DataBus::instance().get_latest<double>("kline/gls_drift_z", "000001.SZ", v_up));
+    EXPECT_TRUE(DataBus::instance().get_latest<double>("kline/wls_drift_z", "000001.SZ", v_up));
     EXPECT_TRUE(std::isfinite(v_up));
     EXPECT_GT(v_up, 0.0);
 
     DataBus::instance().reset();
-    TestGlsDriftZFactor::register_topics(256);
+    TestWlsDriftZFactor::register_topics(256);
 
-    TestGlsDriftZFactor down({"000002.SZ"});
+    TestWlsDriftZFactor down({"000002.SZ"});
     auto downBars = makeTrendBars("000002.SZ", 30, 100.0, -1.0);
     for (const auto& b : downBars) down.on_bar(b);
     double v_down = 0.0;
-    EXPECT_TRUE(DataBus::instance().get_latest<double>("kline/gls_drift_z", "000002.SZ", v_down));
+    EXPECT_TRUE(DataBus::instance().get_latest<double>("kline/wls_drift_z", "000002.SZ", v_down));
     EXPECT_TRUE(std::isfinite(v_down));
     EXPECT_LT(v_down, 0.0);
 }
 
 } // namespace factorlib
-

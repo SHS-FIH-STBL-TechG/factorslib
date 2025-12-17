@@ -4,7 +4,7 @@
 add_executable(kline_factors_tests
         kline_factors_tests_main.cpp
         ar1_return_factor_test.cpp
-        gls_drift_z_factor_test.cpp
+        wls_drift_z_factor_test.cpp
         hmm2_logodds_factor_test.cpp
         bayes_drift_logodds_factor_test.cpp
         high_volume_remaining_factor_test.cpp

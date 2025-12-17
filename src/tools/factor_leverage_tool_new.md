@@ -39,7 +39,7 @@ factor_leverage_tool_new
     [--out_dir DIR]
     [--theta_min 0] [--theta_max 2.5] [--theta_step 0.05]
     [--D 250] [--max_leverage 2]
-    [--train 252] [--val 63] [--step 1] [--zwin 250]
+    [--train 252] [--val 63] [--train_pct 0.75] [--val_pct 0.10] [--step 1] [--zwin 250]
 ```
 
 说明：
@@ -49,6 +49,7 @@ factor_leverage_tool_new
 - `--D` 用于样本裁剪：若指定则仅使用最近 `D` 天数据；未指定则使用全样本。
 - `--train` 为 walk-forward 的滚动窗口长度（每次重新拟合 policy 使用最近 `train` 天的数据）。
 - `--val` 为训练窗口内部的验证集长度（用于选阈值）；训练集长度为 `train-val`。
+- `--train_pct/--val_pct` 与 `--train/--val` 二选一，且必须成对提供；按每个 code 的总样本数 `N` 自动换算：`train_window=floor((train_pct+val_pct)*N)`、`val_window=floor(val_pct*N)`，剩余为测试集（OOS）。
 - `--step` 控制每隔多少天更新一次 policy（其余日期沿用上一期的最优阈值/方向/模式）。
 - `--zwin` 为 rank→normal 的滑窗长度（在线高斯化窗口）。
 - `--parquet_dir` 默认直读 parquet（不落盘 CSV），支持两类 schema：

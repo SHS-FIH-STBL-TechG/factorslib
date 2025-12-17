@@ -696,6 +696,16 @@ def plot_hist(ax, values, title):
     ax.set_title(title)
     ax.grid(alpha=0.3)
 
+def describe(values):
+    if not values:
+        return ""
+    v = np.array(values, dtype=float)
+    n = v.size
+    mean = float(np.mean(v))
+    std = float(np.std(v))
+    p1, p50, p99 = (float(x) for x in np.percentile(v, [1, 50, 99]))
+    return f"n={n} mean={mean:.4g} std={std:.4g} p1={p1:.4g} p50={p50:.4g} p99={p99:.4g}"
+
 def main():
     # argv: data.csv out.png title factor_col b_col leverage_col theta_text score_text baseline_text
     if len(sys.argv) < 10:
@@ -703,15 +713,24 @@ def main():
         return 1
     csv_path, png_path, title, factor_col, b_col, leverage_col, theta_text, score_text, baseline_text = sys.argv[1:10]
 
+    factor_vals = read_column(csv_path, factor_col)
+    b_vals = read_column(csv_path, b_col)
     lev_vals = read_column(csv_path, leverage_col)
 
     if not lev_vals:
         print(f"[WARN] no numeric values found in {csv_path}")
         return 0
 
-    # b_raw 与 leverage 当前口径一致：仅绘制 leverage 分布
-    fig, ax = plt.subplots(1, 1, figsize=(6, 4))
-    plot_hist(ax, lev_vals, f"{leverage_col} distribution (L_t)")
+    # distributions: factor_raw (X_t), b_raw (b_t), leverage (L_t)
+    fig, axes = plt.subplots(3, 1, figsize=(7, 9))
+    plot_hist(axes[0], factor_vals, f"{factor_col} distribution (X_t)")
+    if factor_vals:
+        axes[0].text(0.99, 0.98, describe(factor_vals), transform=axes[0].transAxes, ha="right", va="top", fontsize=8)
+    plot_hist(axes[1], b_vals, f"{b_col} distribution (b_t)")
+    if b_vals:
+        axes[1].text(0.99, 0.98, describe(b_vals), transform=axes[1].transAxes, ha="right", va="top", fontsize=8)
+    plot_hist(axes[2], lev_vals, f"{leverage_col} distribution (L_t)")
+    axes[2].text(0.99, 0.98, describe(lev_vals), transform=axes[2].transAxes, ha="right", va="top", fontsize=8)
 
     fig.suptitle(title)
     subtitle_items = []
@@ -766,7 +785,7 @@ int main(int argc, char** argv) {
             << "    [--out_dir DIR]                 (default output/factor_leverage) \\\n"
             << "    [--theta_min 0] [--theta_max 2.5] [--theta_step 0.05] \\\n"
             << "    [--D 250] [--max_leverage 2] \\\n"
-            << "    [--train 252] [--val 63] [--step 1] [--zwin 250]\n"
+            << "    [--train 252] [--val 63] [--train_pct 0.75] [--val_pct 0.10] [--step 1] [--zwin 250]\n"
 #if !defined(_WIN32)
             << "Notes:\n"
             << "  - On Linux, this tool does not generate PNG plots.\n"
@@ -825,11 +844,28 @@ int main(int argc, char** argv) {
     if (auto v = get_arg(argc, argv, "--max_leverage")) cfg.max_leverage = std::stod(*v);
 
     // walk-forward (no-leak) settings
-    const int train_window = std::max(20, std::stoi(get_arg(argc, argv, "--train").value_or("252")));
-    const int val_window_raw = std::max(10, std::stoi(get_arg(argc, argv, "--val").value_or("63")));
+    const int train_window_fixed = std::max(20, std::stoi(get_arg(argc, argv, "--train").value_or("252")));
+    const int val_window_raw_fixed = std::max(10, std::stoi(get_arg(argc, argv, "--val").value_or("63")));
+    std::optional<double> train_pct;
+    std::optional<double> val_pct;
+    if (auto v = get_arg(argc, argv, "--train_pct")) train_pct = std::stod(*v);
+    if (auto v = get_arg(argc, argv, "--val_pct")) val_pct = std::stod(*v);
+    if (train_pct.has_value() || val_pct.has_value()) {
+        if (!train_pct.has_value() || !val_pct.has_value()) {
+            std::cerr << "ERROR: --train_pct and --val_pct must be provided together.\n";
+            return 2;
+        }
+        if (!std::isfinite(*train_pct) || !std::isfinite(*val_pct) ||
+            *train_pct <= 0.0 || *val_pct <= 0.0 ||
+            *train_pct >= 1.0 || *val_pct >= 1.0 ||
+            (*train_pct + *val_pct) >= 1.0) {
+            std::cerr << "ERROR: invalid --train_pct/--val_pct; require 0<train_pct<1, 0<val_pct<1, and train_pct+val_pct<1.\n";
+            return 2;
+        }
+    }
     const int step = std::max(1, std::stoi(get_arg(argc, argv, "--step").value_or("1")));
     const std::size_t zwin = static_cast<std::size_t>(std::max(5, std::stoi(get_arg(argc, argv, "--zwin").value_or("250"))));
-    const int val_window = std::min(val_window_raw, std::max(10, train_window - 10));
+    const int val_window_fixed = std::min(val_window_raw_fixed, std::max(10, train_window_fixed - 10));
 
     factorlib::tools::FactorLeverageOptimizer opt(cfg);
 
@@ -987,6 +1023,19 @@ int main(int argc, char** argv) {
                 }
                 auto zo = zg.transform(v);
                 z.push_back(zo.has_value() ? *zo : std::numeric_limits<double>::quiet_NaN());
+            }
+
+            int train_window = train_window_fixed;
+            int val_window = val_window_fixed;
+            if (train_pct.has_value() && val_pct.has_value()) {
+                const int total_n = static_cast<int>(ts.size());
+                const int train_window_pct =
+                    static_cast<int>(std::floor((*train_pct + *val_pct) * static_cast<double>(total_n)));
+                const int val_window_raw_pct =
+                    static_cast<int>(std::floor((*val_pct) * static_cast<double>(total_n)));
+                train_window = std::max(20, train_window_pct);
+                const int val_window_raw = std::max(10, val_window_raw_pct);
+                val_window = std::min(val_window_raw, std::max(10, train_window - 10));
             }
 
             if (static_cast<int>(ts.size()) <= train_window + 5) {

@@ -14,19 +14,19 @@
 
 namespace factorlib {
 
-struct GlsDriftZConfig {
+struct WlsDriftZConfig {
     int window_size = 60;         // windowN in yinzi1
     int min_obs = 20;
     double sigma2_floor = 1e-8;
     double r_cap = 0.20;
 };
 
-class GlsDriftZFactor : public BaseFactor {
+class WlsDriftZFactor : public BaseFactor {
 public:
     using Code = std::string;
 
-    explicit GlsDriftZFactor(const std::vector<Code>& codes,
-                             const GlsDriftZConfig& cfg = GlsDriftZConfig{});
+    explicit WlsDriftZFactor(const std::vector<Code>& codes,
+                             const WlsDriftZConfig& cfg = WlsDriftZConfig{});
 
     static void register_topics(std::size_t capacity);
 
@@ -41,7 +41,7 @@ private:
             double wr = 0.0;
         };
 
-        explicit CodeState(const GlsDriftZConfig& cfg);
+        explicit CodeState(const WlsDriftZConfig& cfg);
 
         bool has_last_close = false;
         double last_close = 0.0;
@@ -54,14 +54,14 @@ private:
         double sum_w = 0.0;
         double sum_wr = 0.0;
 
-        bool push_bar(const Bar& b, const GlsDriftZConfig& cfg);
-        bool ready(const GlsDriftZConfig& cfg) const {
+        bool push_bar(const Bar& b, const WlsDriftZConfig& cfg);
+        bool ready(const WlsDriftZConfig& cfg) const {
             return static_cast<int>(window.size()) >= cfg.min_obs;
         }
         double value() const;
     };
 
-    GlsDriftZConfig _cfg;
+    WlsDriftZConfig _cfg;
     std::unordered_set<Code> _codes_filter;
     std::unordered_map<Code, CodeState> _states;
 

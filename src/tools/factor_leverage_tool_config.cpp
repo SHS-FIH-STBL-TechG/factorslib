@@ -6,7 +6,7 @@
 #include "factors/kline/volume_ar_forecast_factor.h"
 #include "factors/kline/volume_price_structure_factor.h"
 #include "factors/kline/kalman_forecast_z_factor.h"
-#include "factors/kline/gls_drift_z_factor.h"
+#include "factors/kline/wls_drift_z_factor.h"
 #include "factors/kline/hmm2_logodds_factor.h"
 #include "factors/kline/bayes_drift_logodds_factor.h"
 #include "factors/stat/wavelet_trend_energy_factor.h"
@@ -89,11 +89,11 @@ const std::vector<FactorBinding>& GetFactorBindings() {
             }
         },
         {
-            "gls_drift_z",
-            "kline/gls_drift_z",
-            [](std::size_t cap) { factorlib::GlsDriftZFactor::register_topics(cap); },
+            "wls_drift_z",
+            "kline/wls_drift_z",
+            [](std::size_t cap) { factorlib::WlsDriftZFactor::register_topics(cap); },
             [](const std::vector<std::string>& codes) {
-                return MakeBarOnlyFactor<factorlib::GlsDriftZFactor>(codes);
+                return MakeBarOnlyFactor<factorlib::WlsDriftZFactor>(codes);
             }
         },
         {
