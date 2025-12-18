@@ -12,6 +12,11 @@
 #include "factors/stat/wavelet_trend_energy_factor.h"
 #include "factors/Kline_new/haar_wavelet_trend_factor.h"
 
+#include <chrono>
+#include <ctime>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <utility>
 
 namespace factorlib::tools {
@@ -144,7 +149,28 @@ std::string DefaultDataDir() {
 }
 
 std::string DefaultOutputDir() {
-    return "output/factor_leverage";
+    namespace fs = std::filesystem;
+
+    const auto now = std::chrono::system_clock::now();
+    const std::time_t tt = std::chrono::system_clock::to_time_t(now);
+
+    std::tm tm{};
+#if defined(_WIN32)
+    localtime_s(&tm, &tt);
+#else
+    localtime_r(&tt, &tm);
+#endif
+
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%y%m%d%H%M%S");
+
+    fs::path base = fs::path("output") / ("factor_leverage_" + oss.str());
+    std::error_code ec;
+    if (fs::exists(base, ec) && !ec) {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+        base = fs::path("output") / ("factor_leverage_" + oss.str() + "_" + std::to_string(ms));
+    }
+    return base.string();
 }
 
 } // namespace factorlib::tools

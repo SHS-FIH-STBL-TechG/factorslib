@@ -472,7 +472,8 @@ std::vector<RetPoint> compute_next_returns(const std::vector<factorlib::Bar>& ba
         const auto& b0 = bars[i];
         const auto& b1 = bars[i + 1];
         if (b0.close <= 0.0) continue;
-        double r = b1.close / b0.close - 1.0;
+        // log return: r_t = log(P_{t+1} / P_t)
+        double r = std::log(b1.close / b0.close);
         if (!std::isfinite(r)) continue;
         out.push_back({b0.data_time_ms, r});
     }
@@ -483,6 +484,8 @@ struct WfPoint {
     int64_t ts_ms = 0;
     double x_raw = std::numeric_limits<double>::quiet_NaN();
     double z = std::numeric_limits<double>::quiet_NaN();
+    enum class Split { Train, Val, Test };
+    Split split = Split::Train;
     // policy (fit on trailing window)
     factorlib::tools::TradeMode mode = factorlib::tools::TradeMode::BothSides;
     int polarity = +1;
@@ -505,6 +508,14 @@ struct WfPoint {
     double theta_raw_low = std::numeric_limits<double>::quiet_NaN();
     double theta_raw_high = std::numeric_limits<double>::quiet_NaN();
 };
+
+static inline const char* split_to_str(WfPoint::Split s) {
+    switch (s) {
+        case WfPoint::Split::Train: return "train";
+        case WfPoint::Split::Val: return "val";
+        default: return "test";
+    }
+}
 
 double compute_b_raw(double zv,
                      const factorlib::tools::ThresholdSearchResult& best,
@@ -542,14 +553,13 @@ double compute_b_raw(double zv,
 // Same behavior as FactorLeverageOptimizer::finalize_leverage (but that method is private).
 // We duplicate it here to keep this tool self-contained and compilable.
 static inline double finalize_leverage_like_optimizer(double leverage,
-                                                     double raw_signal,
-                                                     const factorlib::tools::LeverageSearchConfig& cfg) {
-    // Only max leverage clamp; do NOT force |L| >= 1.
-    if (raw_signal == 0.0 || !std::isfinite(raw_signal)) {
+                                                      double raw_signal,
+                                                      const factorlib::tools::LeverageSearchConfig& cfg) {
+    (void)cfg;
+    // No clamp: leverage can exceed max_leverage after risk alignment.
+    if (raw_signal == 0.0 || !std::isfinite(raw_signal) || !std::isfinite(leverage)) {
         return 0.0;
     }
-    if (leverage > cfg.max_leverage) leverage = cfg.max_leverage;
-    if (leverage < -cfg.max_leverage) leverage = -cfg.max_leverage;
     return leverage;
 }
 
@@ -558,7 +568,7 @@ void write_wf_csv(const fs::path& path,
                   const std::string& code,
                   const std::string& factor_key) {
     std::ofstream out(path);
-    out << "date,code,factor,factor_raw,z,mode,polarity,theta,z_cap,c_scale,b_raw,leverage,next_return,equity,drawdown,active,profile_kind,symmetry_score,unique_ratio,max_freq_ratio,raw_threshold_low,raw_threshold_high\n";
+    out << "date,code,factor,split,factor_raw,z,mode,polarity,theta,z_cap,c_scale,b_raw,leverage,next_return,equity,drawdown,active,profile_kind,symmetry_score,unique_ratio,max_freq_ratio,raw_threshold_low,raw_threshold_high\n";
     auto kind_to_str = [](factorlib::tools::FactorDistributionKind k) {
         switch (k) {
             case factorlib::tools::FactorDistributionKind::SymmetricContinuous: return "symmetric";
@@ -578,6 +588,7 @@ void write_wf_csv(const fs::path& path,
         out << format_date_utc(p.ts_ms) << ","
             << code << ","
             << factor_key << ","
+            << split_to_str(p.split) << ","
             << p.x_raw << ","
             << p.z << ","
             << mode_to_str(p.mode) << ","
@@ -604,40 +615,154 @@ void write_wf_csv(const fs::path& path,
 void append_wf_summary(const fs::path& path,
                        const std::string& code,
                        const std::string& factor_key,
-                       int train_window,
-                       int val_window,
-                       int step,
+                       int train_size,
+                       int val_size,
+                       int test_size,
                        std::size_t zwin,
-                       double oos_score,
-                       double oos_baseline_score,
-                       double final_equity,
-                       double dd_rms,
-                       std::size_t trade_days,
-                       std::size_t T_oos_days,
+                       const std::string& train_start,
+                       const std::string& train_end,
+                       const std::string& val_start,
+                       const std::string& val_end,
+                       const std::string& test_start,
+                       const std::string& test_end,
+                       double train_score,
+                       double train_baseline_score,
+                       double val_score,
+                       double val_baseline_score,
+                       double test_score,
+                       double test_baseline_score,
+                       double val_final_equity,
+                       double val_dd_rms,
+                       std::size_t trade_days_val,
                        double avg_theta,
-                       double avg_c_scale,
-                       double avg_val_score) {
+                       double avg_c_scale) {
     const bool exists = fs::exists(path);
     std::ofstream out(path, std::ios::app);
     if (!exists) {
-        out << "code,factor,oos_score,oos_baseline_score,train_window,val_window,step,zwin,final_equity,dd_rms,trade_days,T_oos_days,avg_theta,avg_c_scale,avg_val_score\n";
+        out << "code,factor,"
+               "train_score,train_baseline_score,"
+               "val_score,val_baseline_score,"
+               "test_score,test_baseline_score,"
+               "train_size,val_size,test_size,"
+               "zwin,"
+               "train_start,train_end,"
+               "val_start,val_end,"
+               "test_start,test_end,"
+               "val_final_equity,val_dd_rms,trade_days_val,"
+               "avg_theta,avg_c_scale\n";
     }
     out << code << ","
         << factor_key << ","
-        << oos_score << ","
-        << oos_baseline_score << ","
-        << train_window << ","
-        << val_window << ","
-        << step << ","
+        << train_score << ","
+        << train_baseline_score << ","
+        << val_score << ","
+        << val_baseline_score << ","
+        << test_score << ","
+        << test_baseline_score << ","
+        << train_size << ","
+        << val_size << ","
+        << test_size << ","
         << zwin << ","
-        << final_equity << ","
-        << dd_rms << ","
-        << trade_days << ","
-        << T_oos_days << ","
+        << train_start << ","
+        << train_end << ","
+        << val_start << ","
+        << val_end << ","
+        << test_start << ","
+        << test_end << ","
+        << val_final_equity << ","
+        << val_dd_rms << ","
+        << trade_days_val << ","
         << avg_theta << ","
-        << avg_c_scale << ","
-        << avg_val_score
+        << avg_c_scale
         << "\n";
+}
+
+struct SegmentScore {
+    bool ok = false;
+    double score = std::numeric_limits<double>::quiet_NaN();
+    double baseline_score = std::numeric_limits<double>::quiet_NaN();
+    double final_equity = std::numeric_limits<double>::quiet_NaN();
+    double dd_rms = std::numeric_limits<double>::quiet_NaN();
+    std::size_t trade_days = 0;
+};
+
+SegmentScore score_segment_final_simple(const std::vector<double>& z,
+                                       const std::vector<double>& next_ret,
+                                       std::size_t begin,
+                                       std::size_t end,
+                                       const factorlib::tools::ThresholdSearchResult& best,
+                                       const factorlib::tools::LeverageSearchConfig& cfg) {
+    SegmentScore out;
+    if (begin >= end || end > z.size() || z.size() != next_ret.size()) return out;
+
+    const double T = static_cast<double>(end - begin);
+    if (!(T > 0.0)) return out;
+
+    double E = 0.0;
+    double peak = 0.0;
+    double sum_lr = 0.0;
+    double sum_l2 = 0.0;
+    double sum_dd2 = 0.0;
+    std::size_t trades = 0;
+
+    for (std::size_t t = begin; t < end; ++t) {
+        const double r = next_ret[t];
+        if (!std::isfinite(r)) return out;
+        const double b = compute_b_raw(z[t], best, cfg);
+        const double L = finalize_leverage_like_optimizer(best.c_scale * b, b, cfg);
+        if (!std::isfinite(L)) return out;
+        if (L != 0.0) trades += 1;
+
+        sum_lr += L * r;
+        sum_l2 += L * L;
+
+        E += L * r;
+        if (E > peak) peak = E;
+        const double dd = peak - E;
+        if (!std::isfinite(dd)) return out;
+        sum_dd2 += dd * dd;
+    }
+
+    if (!(sum_l2 > 1e-12) || !(sum_dd2 > 1e-12)) return out;
+
+    const double score =
+        std::sqrt(T / sum_l2) *
+        ((252.0 / std::max(1.0, T)) * sum_lr) /
+        std::sqrt((252.0 / std::max(1.0, T)) * sum_dd2);
+
+    double E_base = 0.0;
+    double peak_base = 0.0;
+    double sum_lr_b = 0.0;
+    double sum_l2_b = 0.0;
+    double sum_dd2_b = 0.0;
+    for (std::size_t t = begin; t < end; ++t) {
+        const double r = next_ret[t];
+        if (!std::isfinite(r)) continue;
+        const double L = 1.0;
+        sum_lr_b += L * r;
+        sum_l2_b += 1.0;
+        E_base += r;
+        if (E_base > peak_base) peak_base = E_base;
+        const double dd = peak_base - E_base;
+        if (!std::isfinite(dd)) break;
+        sum_dd2_b += dd * dd;
+    }
+
+    double baseline_score = std::numeric_limits<double>::quiet_NaN();
+    if (sum_l2_b > 1e-12 && sum_dd2_b > 1e-12) {
+        baseline_score =
+            std::sqrt(T / sum_l2_b) *
+            ((252.0 / std::max(1.0, T)) * sum_lr_b) /
+            std::sqrt((252.0 / std::max(1.0, T)) * sum_dd2_b);
+    }
+
+    out.ok = std::isfinite(score);
+    out.score = score;
+    out.baseline_score = baseline_score;
+    out.final_equity = E;
+    out.dd_rms = std::sqrt(sum_dd2 / std::max(1.0, T));
+    out.trade_days = trades;
+    return out;
 }
 
 bool run_triple_hist_plot(const fs::path& script_path,
@@ -713,24 +838,88 @@ def main():
         return 1
     csv_path, png_path, title, factor_col, b_col, leverage_col, theta_text, score_text, baseline_text = sys.argv[1:10]
 
-    factor_vals = read_column(csv_path, factor_col)
-    b_vals = read_column(csv_path, b_col)
-    lev_vals = read_column(csv_path, leverage_col)
+    # read all rows for split-aware plots
+    rows = []
+    with open(csv_path, newline='', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rows.append(row)
 
-    if not lev_vals:
+    def pick_float(row, key):
+        try:
+            v = float(row.get(key, "nan"))
+            return v if math.isfinite(v) else None
+        except Exception:
+            return None
+
+    train_rows = [r for r in rows if (r.get("split", "") == "train")]
+    val_rows = [r for r in rows if (r.get("split", "") == "val")]
+
+    factor_train = [pick_float(r, factor_col) for r in train_rows]
+    factor_train = [v for v in factor_train if v is not None]
+    b_train = [pick_float(r, b_col) for r in train_rows]
+    b_train = [v for v in b_train if v is not None]
+    lev_train = [pick_float(r, leverage_col) for r in train_rows]
+    lev_train = [v for v in lev_train if v is not None]
+
+    if not factor_train and not b_train and not lev_train:
         print(f"[WARN] no numeric values found in {csv_path}")
         return 0
 
-    # distributions: factor_raw (X_t), b_raw (b_t), leverage (L_t)
-    fig, axes = plt.subplots(3, 1, figsize=(7, 9))
-    plot_hist(axes[0], factor_vals, f"{factor_col} distribution (X_t)")
-    if factor_vals:
-        axes[0].text(0.99, 0.98, describe(factor_vals), transform=axes[0].transAxes, ha="right", va="top", fontsize=8)
-    plot_hist(axes[1], b_vals, f"{b_col} distribution (b_t)")
-    if b_vals:
-        axes[1].text(0.99, 0.98, describe(b_vals), transform=axes[1].transAxes, ha="right", va="top", fontsize=8)
-    plot_hist(axes[2], lev_vals, f"{leverage_col} distribution (L_t)")
-    axes[2].text(0.99, 0.98, describe(lev_vals), transform=axes[2].transAxes, ha="right", va="top", fontsize=8)
+    def date_range(rs):
+        if not rs:
+            return ""
+        d0 = rs[0].get("date", "")
+        d1 = rs[-1].get("date", "")
+        return f"{d0}~{d1}"
+
+    train_range = date_range(train_rows)
+    val_range = date_range(val_rows)
+
+    # 2x3: train distributions + (train/val/test) equity curves (simple interest)
+    fig, axes = plt.subplots(2, 3, figsize=(18, 8))
+    ax00, ax01, ax02 = axes[0][0], axes[0][1], axes[0][2]
+    ax10, ax11, ax12 = axes[1][0], axes[1][1], axes[1][2]
+
+    plot_hist(ax00, factor_train, f"{factor_col} (train)  {train_range}")
+    if factor_train:
+        ax00.text(0.99, 0.98, describe(factor_train), transform=ax00.transAxes, ha="right", va="top", fontsize=8)
+
+    plot_hist(ax01, b_train, f"{b_col} (train)  {train_range}")
+    if b_train:
+        ax01.text(0.99, 0.98, describe(b_train), transform=ax01.transAxes, ha="right", va="top", fontsize=8)
+
+    plot_hist(ax02, lev_train, f"{leverage_col} (train)  {train_range}")
+    if lev_train:
+        ax02.text(0.99, 0.98, describe(lev_train), transform=ax02.transAxes, ha="right", va="top", fontsize=8)
+
+    test_rows = [r for r in rows if (r.get("split", "") == "test")]
+    test_range = date_range(test_rows)
+
+    def plot_curve(ax, rs, title_prefix):
+        # E_t = sum(L r) vs sum(r), both start at 0
+        strat = []
+        base = []
+        s = 0.0
+        b = 0.0
+        for r in rs:
+            L = pick_float(r, leverage_col)
+            rr = pick_float(r, "next_return")
+            if L is None or rr is None:
+                continue
+            s += L * rr
+            b += rr
+            strat.append(s)
+            base.append(b)
+        ax.plot(strat, label="strategy (leverage * r)")
+        ax.plot(base, label="baseline (1x hold)")
+        ax.set_title(title_prefix)
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=9)
+
+    plot_curve(ax10, train_rows, f"Train cumulative return (simple)  {train_range}")
+    plot_curve(ax11, val_rows, f"Validation cumulative return (simple)  {val_range}")
+    plot_curve(ax12, test_rows, f"Test cumulative return (simple)  {test_range}")
 
     fig.suptitle(title)
     subtitle_items = []
@@ -782,10 +971,12 @@ int main(int argc, char** argv) {
             << "    [--factor name1,name2|all]      (default all built-ins) \\\n"
             << "    [--codes CODE1,CODE2,...]       (default load every CSV) \\\n"
             << "    [--start YYYY-MM-DD] [--end YYYY-MM-DD] \\\n"
-            << "    [--out_dir DIR]                 (default output/factor_leverage) \\\n"
+            << "    [--out_dir DIR]                 (default output/factor_leverage_YYMMDDHHMMSS) \\\n"
             << "    [--theta_min 0] [--theta_max 2.5] [--theta_step 0.05] \\\n"
-            << "    [--D 250] [--max_leverage 2] \\\n"
-            << "    [--train 252] [--val 63] [--train_pct 0.75] [--val_pct 0.10] [--step 1] [--zwin 250]\n"
+            << "    [--D N] [--max_leverage 2] \\\n"
+            << "    [--train_pct 0.6] [--val_pct 0.2] [--test_pct 0.2] \\\n"
+            << "    [--train N] [--val N] [--test N] \\\n"
+            << "    [--zwin 250]\n"
 #if !defined(_WIN32)
             << "Notes:\n"
             << "  - On Linux, this tool does not generate PNG plots.\n"
@@ -843,29 +1034,48 @@ int main(int argc, char** argv) {
     if (auto v = get_arg(argc, argv, "--D")) { cfg.D = std::stoi(*v); D_overridden = true; }
     if (auto v = get_arg(argc, argv, "--max_leverage")) cfg.max_leverage = std::stod(*v);
 
-    // walk-forward (no-leak) settings
-    const int train_window_fixed = std::max(20, std::stoi(get_arg(argc, argv, "--train").value_or("252")));
-    const int val_window_raw_fixed = std::max(10, std::stoi(get_arg(argc, argv, "--val").value_or("63")));
-    std::optional<double> train_pct;
-    std::optional<double> val_pct;
-    if (auto v = get_arg(argc, argv, "--train_pct")) train_pct = std::stod(*v);
-    if (auto v = get_arg(argc, argv, "--val_pct")) val_pct = std::stod(*v);
-    if (train_pct.has_value() || val_pct.has_value()) {
-        if (!train_pct.has_value() || !val_pct.has_value()) {
-            std::cerr << "ERROR: --train_pct and --val_pct must be provided together.\n";
-            return 2;
-        }
-        if (!std::isfinite(*train_pct) || !std::isfinite(*val_pct) ||
-            *train_pct <= 0.0 || *val_pct <= 0.0 ||
-            *train_pct >= 1.0 || *val_pct >= 1.0 ||
-            (*train_pct + *val_pct) >= 1.0) {
-            std::cerr << "ERROR: invalid --train_pct/--val_pct; require 0<train_pct<1, 0<val_pct<1, and train_pct+val_pct<1.\n";
-            return 2;
-        }
-    }
-    const int step = std::max(1, std::stoi(get_arg(argc, argv, "--step").value_or("1")));
     const std::size_t zwin = static_cast<std::size_t>(std::max(5, std::stoi(get_arg(argc, argv, "--zwin").value_or("250"))));
-    const int val_window_fixed = std::min(val_window_raw_fixed, std::max(10, train_window_fixed - 10));
+
+    const std::optional<std::string> train_arg = get_arg(argc, argv, "--train");
+    const std::optional<std::string> val_arg = get_arg(argc, argv, "--val");
+    const std::optional<std::string> test_arg = get_arg(argc, argv, "--test");
+    const bool use_count_split = train_arg.has_value() || val_arg.has_value() || test_arg.has_value();
+
+    double train_pct = std::stod(get_arg(argc, argv, "--train_pct").value_or("0.6"));
+    double val_pct = std::stod(get_arg(argc, argv, "--val_pct").value_or("0.2"));
+    std::optional<double> test_pct_opt;
+    if (auto v = get_arg(argc, argv, "--test_pct")) test_pct_opt = std::stod(*v);
+
+    if (!use_count_split) {
+        double test_pct = test_pct_opt.value_or(1.0 - train_pct - val_pct);
+        const double sum = train_pct + val_pct + test_pct;
+        if (!(train_pct > 0.0) || !(val_pct > 0.0) || !(test_pct > 0.0) || !std::isfinite(sum) ||
+            std::abs(sum - 1.0) > 1e-8) {
+            std::cerr << "ERROR: invalid split percentages. Require train_pct>0,val_pct>0,test_pct>0 and sum=1.\n";
+            std::cerr << "Got: train_pct=" << train_pct << " val_pct=" << val_pct << " test_pct=" << test_pct << "\n";
+            return 2;
+        }
+        std::cout << "INFO: split mode=pct"
+                  << " train_pct=" << train_pct
+                  << " val_pct=" << val_pct
+                  << " test_pct=" << test_pct << "\n";
+    } else {
+        if (!train_arg.has_value() || !val_arg.has_value()) {
+            std::cerr << "ERROR: count split requires --train and --val (and optional --test)\n";
+            return 2;
+        }
+        std::cout << "INFO: split mode=count"
+                  << " train=" << *train_arg
+                  << " val=" << *val_arg
+                  << (test_arg.has_value() ? (" test=" + *test_arg) : " test=auto") << "\n";
+    }
+
+    if (D_overridden && cfg.D > 0) {
+        std::cout << "INFO: --D enabled, crop each code to last D=" << cfg.D << " bars before splitting\n";
+    } else {
+        std::cout << "INFO: --D not set, use full history before splitting\n";
+    }
+    std::cout << "INFO: --zwin=" << zwin << "\n";
 
     factorlib::tools::FactorLeverageOptimizer opt(cfg);
 
@@ -1025,246 +1235,195 @@ int main(int argc, char** argv) {
                 z.push_back(zo.has_value() ? *zo : std::numeric_limits<double>::quiet_NaN());
             }
 
-            int train_window = train_window_fixed;
-            int val_window = val_window_fixed;
-            if (train_pct.has_value() && val_pct.has_value()) {
-                const int total_n = static_cast<int>(ts.size());
-                const int train_window_pct =
-                    static_cast<int>(std::floor((*train_pct + *val_pct) * static_cast<double>(total_n)));
-                const int val_window_raw_pct =
-                    static_cast<int>(std::floor((*val_pct) * static_cast<double>(total_n)));
-                train_window = std::max(20, train_window_pct);
-                const int val_window_raw = std::max(10, val_window_raw_pct);
-                val_window = std::min(val_window_raw, std::max(10, train_window - 10));
-            }
-
-            if (static_cast<int>(ts.size()) <= train_window + 5) {
-                std::cerr << "[" << factor_name << "] skip " << code
-                          << " (samples too short for train=" << train_window << ")\n";
+            const int total_n = static_cast<int>(ts.size());
+            if (total_n < 60) {
+                std::cerr << "[" << factor_name << "] skip " << code << " (samples too short: " << total_n << ")\n";
                 continue;
             }
 
-            // --- walk-forward: fit params on trailing window, evaluate EVERY day (full calendar)
-            std::vector<WfPoint> wf_pts;
-            wf_pts.reserve(ts.size() - static_cast<std::size_t>(train_window));
+            int train_size = 0;
+            int val_size = 0;
+            int test_size = 0;
 
-            std::optional<factorlib::tools::ThresholdSearchResult> last_good;
-
-            double E = 1.0;
-            double peak = 1.0;
-            double sum_dd2 = 0.0;
-            double sum_lr = 0.0;
-            double sum_l2 = 0.0;
-            std::size_t trade_days = 0;
-
-            double sum_theta = 0.0;
-            std::size_t cnt_policy = 0;
-            double sum_val_score = 0.0;
-            std::size_t cnt_val_score = 0;
-            double sum_xlow = 0.0;
-            double sum_xhigh = 0.0;
-            std::size_t cnt_xlow = 0;
-            std::size_t cnt_xhigh = 0;
-
-            for (std::size_t t = static_cast<std::size_t>(train_window); t < ts.size(); ++t) {
-                // 每 step 天更新一次 policy（fit on [t-train_window, t)）
-                if (((t - static_cast<std::size_t>(train_window)) % static_cast<std::size_t>(step)) == 0) {
-                    const std::size_t s = t - static_cast<std::size_t>(train_window);
-                    const std::size_t e = t;
-
-                    std::vector<int64_t> ts_tr(ts.begin() + static_cast<std::ptrdiff_t>(s), ts.begin() + static_cast<std::ptrdiff_t>(e));
-                    std::vector<double>  x_tr (x_raw.begin() + static_cast<std::ptrdiff_t>(s), x_raw.begin() + static_cast<std::ptrdiff_t>(e));
-                    std::vector<double>  z_tr (z.begin() + static_cast<std::ptrdiff_t>(s), z.begin() + static_cast<std::ptrdiff_t>(e));
-                    std::vector<double>  r_tr (next_ret.begin() + static_cast<std::ptrdiff_t>(s), next_ret.begin() + static_cast<std::ptrdiff_t>(e));
-
-                    const int train_size = std::max(10, static_cast<int>(r_tr.size()) - val_window);
-                    const int val_size = static_cast<int>(r_tr.size()) - train_size;
-                    auto best = opt.search_best_threshold_train_val(ts_tr, x_tr, z_tr, r_tr, train_size, val_size);
-                    if (best.ok) {
-                        last_good = best;
-                        if (std::isfinite(best.score)) {
-                            sum_val_score += best.score;
-                            cnt_val_score += 1;
-                        }
-                    }
+            if (use_count_split) {
+                train_size = std::max(20, std::stoi(*train_arg));
+                val_size = std::max(10, std::stoi(*val_arg));
+                if (test_arg.has_value()) {
+                    test_size = std::max(10, std::stoi(*test_arg));
+                } else {
+                    test_size = total_n - train_size - val_size;
                 }
+                if (train_size + val_size + test_size != total_n) {
+                    test_size = total_n - train_size - val_size;
+                }
+            } else {
+                const double test_pct = test_pct_opt.value_or(1.0 - train_pct - val_pct);
+                train_size = std::max(20, static_cast<int>(std::floor(train_pct * static_cast<double>(total_n))));
+                val_size = std::max(10, static_cast<int>(std::floor(val_pct * static_cast<double>(total_n))));
+                test_size = total_n - train_size - val_size;
+            }
 
-                const factorlib::tools::ThresholdSearchResult* pol = last_good ? &(*last_good) : nullptr;
+            if (train_size < 20 || val_size < 10 || test_size < 10 || (train_size + val_size + test_size) != total_n) {
+                std::cerr << "[" << factor_name << "] skip " << code
+                          << " (bad split: train=" << train_size
+                          << " val=" << val_size
+                          << " test=" << test_size
+                          << " total=" << total_n << ")\n";
+                continue;
+            }
 
+            const int tv_n = train_size + val_size;
+            std::vector<int64_t> ts_tv(ts.begin(), ts.begin() + tv_n);
+            std::vector<double> x_tv(x_raw.begin(), x_raw.begin() + tv_n);
+            std::vector<double> z_tv(z.begin(), z.begin() + tv_n);
+            std::vector<double> r_tv(next_ret.begin(), next_ret.begin() + tv_n);
+
+            auto best = opt.search_best_threshold_train_val(ts_tv, x_tv, z_tv, r_tv, train_size, val_size);
+            if (!best.ok) {
+                std::cerr << "[" << factor_name << "] skip " << code << " (no valid policy on train/val)\n";
+                continue;
+            }
+
+            std::vector<WfPoint> pts;
+            pts.reserve(static_cast<std::size_t>(total_n));
+
+            double E = 0.0;
+            double peak = 0.0;
+
+            for (int i = 0; i < total_n; ++i) {
                 WfPoint p;
-                p.ts_ms = ts[t];
-                p.x_raw = x_raw[t];
-                p.z = z[t];
-                p.ret = next_ret[t];
-
-                double b_raw = 0.0;
-                double L = 0.0;
-
-                if (pol) {
-                    p.mode = pol->mode;
-                    p.polarity = pol->polarity;
-                    p.theta = pol->theta;
-                    p.z_cap = pol->z_cap;
-                    p.c_scale = std::numeric_limits<double>::quiet_NaN();
-                    p.profile_kind = pol->profile.kind;
-                    p.symmetry_score = pol->profile.symmetry_score;
-                    p.unique_ratio = pol->profile.unique_ratio;
-                    p.max_freq_ratio = pol->profile.max_freq_ratio;
-                    p.theta_raw_low = pol->theta_raw_low;
-                    p.theta_raw_high = pol->theta_raw_high;
-
-                    b_raw = compute_b_raw(p.z, *pol, cfg);
-                    // Final_simple：L_t 取 b_raw（不再做 c_scale 风险缩放）
-                    L = finalize_leverage_like_optimizer(b_raw, b_raw, cfg);
-                    p.active = (b_raw != 0.0);
-
-                    // 统计策略参数均值（按“评估日历”计数）
-                    sum_theta += p.theta;
-                    cnt_policy += 1;
-                    if (std::isfinite(p.theta_raw_low)) {
-                        sum_xlow += p.theta_raw_low;
-                        cnt_xlow += 1;
-                    }
-                    if (std::isfinite(p.theta_raw_high)) {
-                        sum_xhigh += p.theta_raw_high;
-                        cnt_xhigh += 1;
-                    }
+                p.ts_ms = ts[static_cast<std::size_t>(i)];
+                p.x_raw = x_raw[static_cast<std::size_t>(i)];
+                p.z = z[static_cast<std::size_t>(i)];
+                if (i < train_size) {
+                    p.split = WfPoint::Split::Train;
+                } else if (i < train_size + val_size) {
+                    p.split = WfPoint::Split::Val;
+                } else {
+                    p.split = WfPoint::Split::Test;
                 }
 
-                p.b_raw = b_raw;
-                p.leverage = L;
+                p.mode = best.mode;
+                p.polarity = best.polarity;
+                p.theta = best.theta;
+                p.z_cap = best.z_cap;
+                p.c_scale = best.c_scale;
+                p.profile_kind = best.profile.kind;
+                p.symmetry_score = best.profile.symmetry_score;
+                p.unique_ratio = best.profile.unique_ratio;
+                p.max_freq_ratio = best.profile.max_freq_ratio;
+                p.theta_raw_low = best.theta_raw_low;
+                p.theta_raw_high = best.theta_raw_high;
 
-                // === 单利累计：E_t = 1 + sum(L r)，允许 DD>1 ===
-                if (std::isfinite(L) && std::isfinite(p.ret)) {
-                    sum_lr += L * p.ret;
-                    sum_l2 += L * L;
-                    E += L * p.ret;
+                p.ret = next_ret[static_cast<std::size_t>(i)];
+
+                p.b_raw = compute_b_raw(p.z, best, cfg);
+                p.leverage = finalize_leverage_like_optimizer(p.c_scale * p.b_raw, p.b_raw, cfg);
+                p.active = (p.b_raw != 0.0);
+
+                // single interest cumulative & absolute drawdown over the whole train+val window
+                if (std::isfinite(p.leverage) && std::isfinite(p.ret)) {
+                    E += p.leverage * p.ret;
                 }
                 p.equity = E;
                 if (E > peak) peak = E;
-                p.drawdown = (peak > 0.0) ? (peak - E) / peak : std::numeric_limits<double>::quiet_NaN();
+                p.drawdown = peak - E;
 
-                if (std::isfinite(p.drawdown)) {
-                    sum_dd2 += p.drawdown * p.drawdown;
-                }
-                if (p.active) trade_days += 1;
-
-                wf_pts.push_back(p);
+                pts.push_back(p);
             }
 
-            if (wf_pts.size() < 20) {
-                std::cerr << "[" << factor_name << "] skip " << code << " (oos points < 20)\n";
-                continue;
-            }
+            const std::size_t train_begin = 0;
+            const std::size_t train_end_i = static_cast<std::size_t>(train_size);
+            const std::size_t val_begin = train_end_i;
+            const std::size_t val_end_i = static_cast<std::size_t>(train_size + val_size);
+            const std::size_t test_begin = val_end_i;
+            const std::size_t test_end_i = static_cast<std::size_t>(total_n);
 
-            const double T_oos = static_cast<double>(wf_pts.size());
-            const double dd_rms = std::sqrt(sum_dd2 / std::max(1.0, T_oos));
-            const double risk_scale_oos =
-                (sum_l2 > 1e-12 && std::isfinite(sum_l2)) ? std::sqrt(252.0 / sum_l2)
-                                                          : std::numeric_limits<double>::quiet_NaN();
-            const double oos_score =
-                (dd_rms > 1e-12 && std::isfinite(dd_rms) && std::isfinite(risk_scale_oos))
-                    ? (risk_scale_oos * ((252.0 / std::max(1.0, T_oos)) * sum_lr) / dd_rms)
-                    : std::numeric_limits<double>::quiet_NaN();
+            SegmentScore train_sc = score_segment_final_simple(z, next_ret, train_begin, train_end_i, best, cfg);
+            SegmentScore val_sc = score_segment_final_simple(z, next_ret, val_begin, val_end_i, best, cfg);
+            SegmentScore test_sc = score_segment_final_simple(z, next_ret, test_begin, test_end_i, best, cfg);
 
-            // baseline (1x hold) on the same oos slice (full calendar within OOS)
-            double E_base = 1.0;
-            double peak_base = 1.0;
-            double sum_dd2_base = 0.0;
-            double sum_lr_base = 0.0;
-            double sum_l2_base = 0.0;
-            for (const auto& pp : wf_pts) {
-                if (!std::isfinite(pp.ret)) continue;
-                const double Lb = 1.0;
-                sum_lr_base += Lb * pp.ret;
-                sum_l2_base += Lb * Lb;
-                E_base += Lb * pp.ret;
-                if (E_base > peak_base) peak_base = E_base;
-                const double dd = (peak_base > 0.0) ? (peak_base - E_base) / peak_base : std::numeric_limits<double>::quiet_NaN();
-                if (std::isfinite(dd)) sum_dd2_base += dd * dd;
-            }
-            const double dd_rms_base = std::sqrt(sum_dd2_base / std::max(1.0, T_oos));
-            const double risk_scale_base =
-                (sum_l2_base > 1e-12 && std::isfinite(sum_l2_base)) ? std::sqrt(252.0 / sum_l2_base)
-                                                                    : std::numeric_limits<double>::quiet_NaN();
-            const double oos_baseline_score =
-                (dd_rms_base > 1e-12 && std::isfinite(dd_rms_base) && std::isfinite(risk_scale_base))
-                    ? (risk_scale_base * ((252.0 / std::max(1.0, T_oos)) * sum_lr_base) / dd_rms_base)
-                    : std::numeric_limits<double>::quiet_NaN();
+            const std::string train_start = format_date_utc(ts[train_begin]);
+            const std::string train_end = format_date_utc(ts[train_end_i - 1]);
+            const std::string val_start = format_date_utc(ts[val_begin]);
+            const std::string val_end = format_date_utc(ts[val_end_i - 1]);
+            const std::string test_start = format_date_utc(ts[test_begin]);
+            const std::string test_end = format_date_utc(ts[test_end_i - 1]);
 
-            const double avg_theta = (cnt_policy > 0) ? (sum_theta / static_cast<double>(cnt_policy)) : std::numeric_limits<double>::quiet_NaN();
-            const double avg_c_scale = risk_scale_oos;
-            const double avg_theta_raw_low = (cnt_xlow > 0) ? (sum_xlow / static_cast<double>(cnt_xlow)) : std::numeric_limits<double>::quiet_NaN();
-            const double avg_theta_raw_high = (cnt_xhigh > 0) ? (sum_xhigh / static_cast<double>(cnt_xhigh)) : std::numeric_limits<double>::quiet_NaN();
-            const double avg_val_score = (cnt_val_score > 0) ? (sum_val_score / static_cast<double>(cnt_val_score)) : std::numeric_limits<double>::quiet_NaN();
+            const double avg_theta = best.theta;
+            const double avg_c_scale = best.c_scale;
 
             fs::path csv_path = factor_out_dir / ("leverage_" + code + "_" + factor_name + ".csv");
-            for (auto& p : wf_pts) {
-                p.c_scale = avg_c_scale;
-            }
-            write_wf_csv(csv_path, wf_pts, code, factor_name);
+            write_wf_csv(csv_path, pts, code, factor_name);
 
             append_wf_summary(summary_path, code, factor_name,
-                              train_window, val_window, step, zwin,
-                              oos_score, oos_baseline_score,
-                              E, dd_rms, trade_days, wf_pts.size(),
-                              avg_theta, avg_c_scale, avg_val_score);
+                              train_size, val_size, test_size, zwin,
+                              train_start, train_end, val_start, val_end, test_start, test_end,
+                              train_sc.score, train_sc.baseline_score,
+                              val_sc.score, val_sc.baseline_score,
+                              test_sc.score, test_sc.baseline_score,
+                              val_sc.final_equity, val_sc.dd_rms,
+                              val_sc.trade_days,
+                              avg_theta, avg_c_scale);
 
             fs::path dist_png = factor_out_dir / ("distribution_" + code + "_" + factor_name + ".png");
 
-            const bool should_plot = std::isfinite(oos_score) &&
-                                     std::isfinite(oos_baseline_score) &&
-                                     (oos_score >= oos_baseline_score);
 #if defined(_WIN32)
-            if (should_plot) {
+            {
                 std::string plot_title = factor_name + " | " + code;
                 std::ostringstream theta_stream;
-                theta_stream << "walk-forward train=" << train_window
-                             << ", step=" << step
-                             << ", zwin=" << zwin
-                             << ", theta_z_avg=" << avg_theta;
-                if (std::isfinite(avg_theta_raw_high)) {
-                    theta_stream << ", x_high_avg=" << avg_theta_raw_high;
+                theta_stream << std::fixed << std::setprecision(4)
+                             << "theta=" << best.theta;
+                if (std::isfinite(best.theta_raw_low)) {
+                    theta_stream << ", raw_low=" << best.theta_raw_low;
                 }
-                if (std::isfinite(avg_theta_raw_low)) {
-                    theta_stream << ", x_low_avg=" << avg_theta_raw_low;
+                if (std::isfinite(best.theta_raw_high)) {
+                    theta_stream << ", raw_high=" << best.theta_raw_high;
                 }
                 std::string theta_label = theta_stream.str();
                 std::ostringstream score_stream;
                 score_stream << std::fixed << std::setprecision(4)
-                             << "oos_score=" << oos_score;
+                             << "val(score/base)=" << val_sc.score << "/" << val_sc.baseline_score
+                             << ", test(score/base)=" << test_sc.score << "/" << test_sc.baseline_score;
                 std::string score_label = score_stream.str();
-                std::ostringstream baseline_stream;
-                baseline_stream << std::fixed << std::setprecision(4)
-                                << "oos_baseline=" << oos_baseline_score;
-                std::string baseline_label = baseline_stream.str();
-                if (!run_triple_hist_plot(plot_script,
-                                          csv_path,
-                                          dist_png,
-                                          plot_title,
-                                          "factor_raw",
+                std::string baseline_label;
+
+                const bool plot_ok =
+                    train_sc.ok && std::isfinite(train_sc.baseline_score) &&
+                    (train_sc.score > train_sc.baseline_score);
+
+                if (plot_ok) {
+                    if (!run_triple_hist_plot(plot_script,
+                                              csv_path,
+                                              dist_png,
+                                              plot_title,
+                                              "factor_raw",
                                           "b_raw",
                                           "leverage",
                                           theta_label,
                                           score_label,
                                           baseline_label)) {
-                    std::cerr << "[" << factor_name << "] 绘制分布图失败: " << dist_png << std::endl;
+                        std::cerr << "[" << factor_name << "] 绘制分布图失败: " << dist_png << std::endl;
+                    }
+                } else {
+                    std::cout << "[" << factor_name << "] INFO " << code
+                              << " skip plot (train_score <= train_baseline)\n";
                 }
-            } else {
-                // 清理旧图，保证“只输出 oos_score >= baseline 的图表”
-                std::error_code ec;
-                fs::remove(dist_png, ec);
             }
 #else
-            (void)should_plot;
             // Linux: no plots
 #endif
 
             std::cout << "[" << factor_name << "] OK " << code
-                      << " oos_score=" << oos_score
-                      << " oos_baseline=" << oos_baseline_score
-                      << " train=" << train_window
-                      << " step=" << step
+                      << " train_score=" << train_sc.score
+                      << " train_baseline=" << train_sc.baseline_score
+                      << " val_score=" << val_sc.score
+                      << " val_baseline=" << val_sc.baseline_score
+                      << " test_score=" << test_sc.score
+                      << " test_baseline=" << test_sc.baseline_score
+                      << " train=" << train_size
+                      << " val=" << val_size
+                      << " test=" << test_size
                       << " zwin=" << zwin
                       << "\n";
             any_code_processed = true;

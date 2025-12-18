@@ -25,7 +25,9 @@ struct LeverageSearchConfig {
     double z_cap_min = 1.5;        ///< z_cap 下限
     double z_cap_max = 6.0;        ///< z_cap 上限
 
-    double symmetry_score_threshold = 0.08;            ///< 对称性判定阈值
+    // 对称性判定阈值：越大越“宽松”（更多分布会被认为对称，允许双边交易）。
+    // 经验上 0.2 在大多数“主体对称、尾部少量极端值”的场景下更符合直觉。
+    double symmetry_score_threshold = 0.2;
     double discrete_unique_ratio_threshold = 0.15;     ///< 离散性判定：唯一值比例阈值
     double discrete_max_freq_ratio_threshold = 0.03;   ///< 离散性判定：最大频率阈值
 };
@@ -73,11 +75,15 @@ struct ThresholdSearchResult {
     int T_trade_days = 0;    ///< 评估样本长度 T（点数/天数）
     double theta = 0.0;      ///< 最优 z-score 阈值
     // 优化目标：Final_simple（单利口径 + 风险对齐 + 回撤惩罚）
-    // Final_simple = sqrt(252 / sum_t L_t^2) * ((252/T) * sum_t (L_t r_t)) / sqrt((1/T) * sum_t DD_t^2)
-    // 其中 L_t 取 b_raw（阈值映射后的仓位幅度），DD_t 基于单利资金曲线计算（允许 DD>1）。
+    // Final_simple（当前口径）：
+    //   Final_simple = sqrt(T / sum_t L_t^2) * ((252/T) * sum_t (L_t r_t)) / sqrt((252/T) * sum_t DD_t^2)
+    // 其中：
+    // - r_t 为对数收益；
+    // - L_t 为最终 leverage（由 b_raw 经过风险对齐/裁剪得到）；
+    // - E_t = sum_{i=1..t} L_i r_i，DD_t = max_{0<=u<=t} E_u - E_t（绝对回撤）。
     double score = -1e100;
     double baseline_score = std::numeric_limits<double>::quiet_NaN();  ///< 基准得分（1x 满仓持有）
-    double final_equity = 1.0;   ///< 单利资金曲线最终权益：E_T = 1 + sum_t (L_t r_t)
+    double final_equity = 1.0;   ///< 单利累计收益曲线的终值：E_T = sum_t (L_t r_t)
     double dd_rms = 0.0;         ///< DD 的均方根：sqrt((1/T) * sum_t DD_t^2)
     double c_scale = 1.0;        ///< 风险对齐系数：sqrt(252 / sum_t L_t^2)
     double z_cap = 3.0;          ///< z-score 裁剪值
